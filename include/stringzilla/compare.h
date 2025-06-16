@@ -161,9 +161,11 @@ SZ_PUBLIC sz_ordering_t sz_order_serial(sz_cptr_t a, sz_size_t a_length, sz_cptr
  */
 #pragma region Haswell Implementation
 #if SZ_USE_HASWELL
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("avx2")
 #pragma clang attribute push(__attribute__((target("avx2"))), apply_to = function)
+#endif
 
 SZ_PUBLIC sz_ordering_t sz_order_haswell(sz_cptr_t a, sz_size_t a_length, sz_cptr_t b, sz_size_t b_length) {
     //! Before optimizing this, read the "Operations Not Worth Optimizing" in Contributions Guide:
@@ -228,9 +230,11 @@ SZ_PUBLIC sz_bool_t sz_equal_haswell(sz_cptr_t a, sz_cptr_t b, sz_size_t length)
     }
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_HASWELL
+#endif
+#endif           // SZ_USE_HASWELL
 #pragma endregion // Haswell Implementation
 
 /*  AVX512 implementation of the string search algorithms for Skylake and newer CPUs.
@@ -240,9 +244,11 @@ SZ_PUBLIC sz_bool_t sz_equal_haswell(sz_cptr_t a, sz_cptr_t b, sz_size_t length)
  */
 #pragma region Skylake Implementation
 #if SZ_USE_SKYLAKE
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "bmi", "bmi2")
 #pragma clang attribute push(__attribute__((target("avx,avx512f,avx512vl,avx512bw,bmi,bmi2"))), apply_to = function)
+#endif
 
 SZ_PUBLIC sz_ordering_t sz_order_skylake(sz_cptr_t a, sz_size_t a_length, sz_cptr_t b, sz_size_t b_length) {
     sz_u512_vec_t a_vec, b_vec;
@@ -331,9 +337,11 @@ SZ_PUBLIC sz_bool_t sz_equal_skylake(sz_cptr_t a, sz_cptr_t b, sz_size_t length)
     return sz_true_k;
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_SKYLAKE
+#endif
+#endif           // SZ_USE_SKYLAKE
 #pragma endregion // Skylake Implementation
 
 /*  AVX512 implementation of the string search algorithms for Ice Lake and newer CPUs.
@@ -344,16 +352,20 @@ SZ_PUBLIC sz_bool_t sz_equal_skylake(sz_cptr_t a, sz_cptr_t b, sz_size_t length)
  */
 #pragma region Ice Lake Implementation
 #if SZ_USE_ICE
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "avx512dq", "avx512vbmi", "bmi", "bmi2")
 #pragma clang attribute push(__attribute__((target("avx,avx512f,avx512vl,avx512bw,avx512dq,avx512vbmi,bmi,bmi2"))), \
                              apply_to = function)
+#endif
 
 /* Nothing here for now. */
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_ICE
+#endif
+#endif           // SZ_USE_ICE
 #pragma endregion // Ice Lake Implementation
 
 /*  Implementation of the string search algorithms using the Arm NEON instruction set, available on 64-bit
@@ -361,9 +373,11 @@ SZ_PUBLIC sz_bool_t sz_equal_skylake(sz_cptr_t a, sz_cptr_t b, sz_size_t length)
  */
 #pragma region NEON Implementation
 #if SZ_USE_NEON
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("arch=armv8.2-a+simd")
 #pragma clang attribute push(__attribute__((target("arch=armv8.2-a+simd"))), apply_to = function)
+#endif
 
 SZ_PUBLIC sz_ordering_t sz_order_neon(sz_cptr_t a, sz_size_t a_length, sz_cptr_t b, sz_size_t b_length) {
     //! Before optimizing this, read the "Operations Not Worth Optimizing" in Contributions Guide:
@@ -392,9 +406,11 @@ SZ_PUBLIC sz_bool_t sz_equal_neon(sz_cptr_t a, sz_cptr_t b, sz_size_t length) {
     return sz_true_k;
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_NEON
+#endif
+#endif           // SZ_USE_NEON
 #pragma endregion // NEON Implementation
 
 /*  Implementation of the string search algorithms using the Arm SVE variable-length registers,
@@ -402,9 +418,11 @@ SZ_PUBLIC sz_bool_t sz_equal_neon(sz_cptr_t a, sz_cptr_t b, sz_size_t length) {
  */
 #pragma region SVE Implementation
 #if SZ_USE_SVE
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("arch=armv8.2-a+sve")
 #pragma clang attribute push(__attribute__((target("arch=armv8.2-a+sve"))), apply_to = function)
+#endif
 
 SZ_PUBLIC sz_bool_t sz_equal_sve(sz_cptr_t a, sz_cptr_t b, sz_size_t length) {
     // Determine the number of bytes in an SVE vector.
@@ -428,9 +446,11 @@ SZ_PUBLIC sz_ordering_t sz_order_sve(sz_cptr_t a, sz_size_t a_length, sz_cptr_t 
     return sz_order_serial(a, a_length, b, b_length);
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_SVE
+#endif
+#endif           // SZ_USE_SVE
 #pragma endregion // SVE Implementation
 
 /*  Pick the right implementation for the string search algorithms.

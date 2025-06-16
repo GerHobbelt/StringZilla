@@ -378,9 +378,11 @@ SZ_PUBLIC void sz_move_serial(sz_ptr_t target, sz_cptr_t source, sz_size_t lengt
 #pragma region Haswell Implementation
 
 #if SZ_USE_HASWELL
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("avx2")
 #pragma clang attribute push(__attribute__((target("avx2"))), apply_to = function)
+#endif
 
 SZ_PUBLIC void sz_fill_haswell(sz_ptr_t target, sz_size_t length, sz_u8_t value) {
     char value_char = *(char *)&value;
@@ -724,9 +726,11 @@ SZ_PUBLIC void sz_lookup_haswell(sz_ptr_t target, sz_size_t length, sz_cptr_t so
     if (length) sz_lookup_serial(target, length, source, lut);
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_HASWELL
+#endif
+#endif           // SZ_USE_HASWELL
 #pragma endregion // Haswell Implementation
 
 /*  AVX512 implementation of the string search algorithms for Skylake and newer CPUs.
@@ -737,9 +741,11 @@ SZ_PUBLIC void sz_lookup_haswell(sz_ptr_t target, sz_size_t length, sz_cptr_t so
 #pragma region Skylake Implementation
 
 #if SZ_USE_SKYLAKE
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "bmi", "bmi2")
 #pragma clang attribute push(__attribute__((target("avx,avx512f,avx512vl,avx512bw,bmi,bmi2"))), apply_to = function)
+#endif
 
 SZ_PUBLIC void sz_fill_skylake(sz_ptr_t target, sz_size_t length, sz_u8_t value) {
     __m512i value_vec = _mm512_set1_epi8(value);
@@ -954,9 +960,11 @@ SZ_PUBLIC void sz_move_skylake(sz_ptr_t target, sz_cptr_t source, sz_size_t leng
     }
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_SKYLAKE
+#endif
+#endif           // SZ_USE_SKYLAKE
 #pragma endregion // Skylake Implementation
 
 /*  AVX512 implementation of the string search algorithms for Ice Lake and newer CPUs.
@@ -967,10 +975,12 @@ SZ_PUBLIC void sz_move_skylake(sz_ptr_t target, sz_cptr_t source, sz_size_t leng
  */
 #pragma region Ice Lake Implementation
 #if SZ_USE_ICE
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "avx512dq", "avx512vbmi", "bmi", "bmi2")
 #pragma clang attribute push(__attribute__((target("avx,avx512f,avx512vl,avx512bw,avx512dq,avx512vbmi,bmi,bmi2"))), \
                              apply_to = function)
+#endif
 
 SZ_PUBLIC void sz_lookup_ice(sz_ptr_t target, sz_size_t length, sz_cptr_t source, sz_cptr_t lut) {
 
@@ -1082,9 +1092,11 @@ SZ_PUBLIC void sz_lookup_ice(sz_ptr_t target, sz_size_t length, sz_cptr_t source
     }
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_ICE
+#endif
+#endif           // SZ_USE_ICE
 #pragma endregion // Ice Lake Implementation
 
 /*  Implementation of the string search algorithms using the Arm NEON instruction set, available on 64-bit
@@ -1092,9 +1104,11 @@ SZ_PUBLIC void sz_lookup_ice(sz_ptr_t target, sz_size_t length, sz_cptr_t source
  */
 #pragma region NEON Implementation
 #if SZ_USE_NEON
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("arch=armv8.2-a+simd")
 #pragma clang attribute push(__attribute__((target("arch=armv8.2-a+simd"))), apply_to = function)
+#endif
 
 SZ_PUBLIC void sz_copy_neon(sz_ptr_t target, sz_cptr_t source, sz_size_t length) {
     // In most cases the `source` and the `target` are not aligned, but we should
@@ -1204,9 +1218,11 @@ SZ_PUBLIC void sz_lookup_neon(sz_ptr_t target, sz_size_t length, sz_cptr_t sourc
     for (; tail_length; target += 1, source += 1, tail_length -= 1) *target = lut[*(sz_u8_t const *)source];
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_NEON
+#endif
+#endif           // SZ_USE_NEON
 #pragma endregion // NEON Implementation
 
 /*  Implementation of the memory operations using the Arm SVE variable-length registers,
@@ -1214,9 +1230,11 @@ SZ_PUBLIC void sz_lookup_neon(sz_ptr_t target, sz_size_t length, sz_cptr_t sourc
  */
 #pragma region SVE Implementation
 #if SZ_USE_SVE
+#if !defined(_MSC_VER)
 #pragma GCC push_options
 #pragma GCC target("arch=armv8.2-a+sve")
 #pragma clang attribute push(__attribute__((target("arch=armv8.2-a+sve"))), apply_to = function)
+#endif
 
 SZ_PUBLIC void sz_fill_sve(sz_ptr_t target, sz_size_t length, sz_u8_t value) {
     svuint8_t value_vec = svdup_u8(value);
@@ -1328,9 +1346,11 @@ SZ_PUBLIC void sz_move_sve(sz_ptr_t target, sz_cptr_t source, sz_size_t length) 
 #endif
 }
 
+#if !defined(_MSC_VER)
 #pragma clang attribute pop
 #pragma GCC pop_options
-#endif            // SZ_USE_SVE
+#endif
+#endif           // SZ_USE_SVE
 #pragma endregion // SVE Implementation
 
 /*  Pick the right implementation for the string search algorithms.

@@ -321,7 +321,7 @@ SZ_PUBLIC sz_ptr_t sz_string_reserve(sz_string_t *string, sz_size_t new_capacity
     string->external.length = string_length;
 
     // Deallocate the old string.
-    if (string_is_external) allocator->free(string_start, string_space, allocator->handle);
+    if (string_is_external) allocator->release(string_start, string_space, allocator->handle);
     return string->external.start;
 }
 
@@ -349,7 +349,7 @@ SZ_PUBLIC sz_ptr_t sz_string_shrink_to_fit(sz_string_t *string, sz_memory_alloca
     string->external.length = string_length;
 
     // Deallocate the old string.
-    if (string_is_external) allocator->free(string_start, string_space, allocator->handle);
+    if (string_is_external) allocator->release(string_start, string_space, allocator->handle);
     return string->external.start;
 }
 
@@ -429,7 +429,7 @@ SZ_PUBLIC sz_size_t sz_string_erase(sz_string_t *string, sz_size_t offset, sz_si
 
 SZ_PUBLIC void sz_string_free(sz_string_t *string, sz_memory_allocator_t *allocator) {
     if (!sz_string_is_on_stack(string))
-        allocator->free(string->external.start, string->external.space, allocator->handle);
+        allocator->release(string->external.start, string->external.space, allocator->handle);
     sz_string_init(string);
 }
 

@@ -356,7 +356,7 @@ SZ_DYNAMIC void sz_dispatch_table_init(void) {
  */
 #pragma comment(linker, "/INCLUDE:_sz_dispatch_table_init")
 #pragma section(".CRT$XCS", read)
-__declspec(allocate(".CRT$XCS")) void (*_sz_dispatch_table_init)() = sz_dispatch_table_init;
+__declspec(allocate(".CRT$XCS")) void (*_sz_dispatch_table_init)(void) = sz_dispatch_table_init;
 
 /*  Called either from CRT code or out own `_DLLMainCRTStartup`, when a DLL is loaded. */
 BOOL WINAPI DllMain(HINSTANCE hints, DWORD forward_reason, LPVOID lp) {

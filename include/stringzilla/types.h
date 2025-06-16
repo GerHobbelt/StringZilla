@@ -611,7 +611,7 @@ typedef void (*sz_memory_free_t)(void *, sz_size_t, void *);
  */
 typedef struct sz_memory_allocator_t {
     sz_memory_allocate_t allocate;
-    sz_memory_free_t free;
+    sz_memory_free_t release;
     void *handle;
 } sz_memory_allocator_t;
 
@@ -908,9 +908,11 @@ SZ_PUBLIC void sz_sequence_from_null_terminated_strings(sz_cptr_t *start, sz_siz
 
 #pragma region Helper Functions
 
+#if !defined(_MSC_VER)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC visibility push(hidden)
+#endif
 
 /*
  **********************************************************************************************************************
@@ -1144,8 +1146,10 @@ SZ_INTERNAL __mmask32 _sz_u32_clamp_mask_until(sz_size_t n) { return n < 32 ? _s
 SZ_INTERNAL __mmask64 _sz_u64_clamp_mask_until(sz_size_t n) {
     return n < 64 ? _sz_u64_mask_until(n) : 0xFFFFFFFFFFFFFFFFull;
 }
+#if !defined(_MSC_VER)
 #pragma GCC pop_options
 #pragma clang attribute pop
+#endif
 #endif
 
 /**
@@ -1314,7 +1318,9 @@ SZ_INTERNAL void _sz_memory_free_fixed(sz_ptr_t start, sz_size_t length, void *h
     sz_unused(start && length && handle);
 }
 
+#if !defined(_MSC_VER)
 #pragma GCC visibility pop
+#endif
 #pragma endregion
 
 #pragma region Serial Implementation
@@ -1338,10 +1344,10 @@ SZ_PUBLIC void _sz_memory_free_default(sz_ptr_t start, sz_size_t length, void *h
 SZ_PUBLIC void sz_memory_allocator_init_default(sz_memory_allocator_t *alloc) {
 #if !SZ_AVOID_LIBC
     alloc->allocate = (sz_memory_allocate_t)_sz_memory_allocate_default;
-    alloc->free = (sz_memory_free_t)_sz_memory_free_default;
+    alloc->release = (sz_memory_free_t)_sz_memory_free_default;
 #else
     alloc->allocate = (sz_memory_allocate_t)SZ_NULL;
-    alloc->free = (sz_memory_free_t)SZ_NULL;
+    alloc->release = (sz_memory_free_t)SZ_NULL;
 #endif
     alloc->handle = SZ_NULL;
 }
@@ -1351,7 +1357,7 @@ SZ_PUBLIC void sz_memory_allocator_init_fixed(sz_memory_allocator_t *alloc, void
     // The second slot is used to store the current consumed capacity.
     // The rest of the buffer is used for the actual data.
     alloc->allocate = (sz_memory_allocate_t)_sz_memory_allocate_fixed;
-    alloc->free = (sz_memory_free_t)_sz_memory_free_fixed;
+    alloc->release = (sz_memory_free_t)_sz_memory_free_fixed;
     alloc->handle = buffer;
     *(sz_size_t *)buffer = length;
     *((sz_ptr_t)buffer + sizeof(sz_size_t)) = sizeof(sz_size_t) * 2; // The capacity and consumption so far
@@ -1379,7 +1385,9 @@ SZ_PUBLIC void sz_sequence_from_null_terminated_strings(sz_cptr_t *start, sz_siz
 #pragma endregion
 
 #ifdef __cplusplus
+#if !defined(_MSC_VER)
 #pragma GCC diagnostic pop
+#endif
 }
 #endif // __cplusplus
 

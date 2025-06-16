@@ -590,7 +590,7 @@ SZ_PUBLIC sz_status_t sz_sequence_argsort_serial(sz_sequence_t const *sequence, 
     _sz_sequence_argsort_serial_next_pgrams(sequence, pgrams, order, 0, sequence->count, 0);
 
     // Free temporary storage.
-    alloc->free(pgrams, memory_usage, alloc);
+    alloc->release(pgrams, memory_usage, alloc);
     return sz_success_k;
 }
 
