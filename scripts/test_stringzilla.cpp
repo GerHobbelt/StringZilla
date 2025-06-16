@@ -1,29 +1,53 @@
-#undef NDEBUG // Enable all assertions
+/**
+ *  @brief   Extensive @b unit-testing suite for StringZilla, written in C++.
+ *  @note    It mostly tests one target hardware platform at a time and should be compiled and run separately for each.
+ *           To override the default hardware platform, overrides the @b `SZ_USE_*` flags at the top of this file.
+ *
+ *  @see     Stress-tests on real-world and synthetic data are integrated into the @b `scripts/bench*.cpp` benchmarks.
+ *
+ *  @file    test.cpp
+ *  @author  Ash Vardanian
+ */
+#undef NDEBUG // ! Enable all assertions for testing
 
-// Enable assertions for iterators
+/**
+ *  The Visual C++ run-time library detects incorrect iterator use,
+ *  and asserts and displays a dialog box at run time on Windows.
+ */
 #if !defined(_ITERATOR_DEBUG_LEVEL) || _ITERATOR_DEBUG_LEVEL == 0
 #define _ITERATOR_DEBUG_LEVEL 1
 #endif
 
-#include <cassert> // assertions
+/**
+ *  ! Overload the following with caution.
+ *  ! Those parameters must never be explicitly set during releases,
+ *  ! but they come handy during development, if you want to validate
+ *  ! different ISA-specific implementations.
 
-// Overload the following with caution.
-// Those parameters must never be explicitly set during releases,
-// but they come handy during development, if you want to validate
-// different ISA-specific implementations.
-// #define SZ_USE_X86_AVX2 0
-// #define SZ_USE_X86_AVX512 0
-// #define SZ_USE_ARM_NEON 0
-// #define SZ_USE_ARM_SVE 0
-#define SZ_DEBUG 1 // Enforce aggressive logging for this unit.
+#define SZ_USE_HASWELL 0
+#define SZ_USE_SKYLAKE 0
+#define SZ_USE_ICE 0
+#define SZ_USE_NEON 0
+#define SZ_USE_SVE 0
+ */
+#define SZ_USE_SVE2 0
+#if defined(SZ_DEBUG)
+#undef SZ_DEBUG
+#endif
+#define SZ_DEBUG 1 // ! Enforce aggressive logging in this translation unit
 
-// Put this at the top to make sure it pulls all the right dependencies
-#include <stringzilla/stringzilla.hpp>
+/**
+ *  Make sure to include the StringZilla headers before anything else,
+ *  to intercept missing `#include` directives and other issues.
+ */
+#include <stringzilla/stringzilla.h>   // Primary C API
+#include <stringzilla/stringzilla.hpp> // C++ string class replacement
 
 #if defined(__SANITIZE_ADDRESS__)
-#include <sanitizer/asan_interface.h> // ASAN
+#include <sanitizer/asan_interface.h> // We use ASAN API to poison memory addresses
 #endif
 
+#include <cassert>       // C-style assertions
 #include <algorithm>     // `std::transform`
 #include <cstdio>        // `std::printf`
 #include <cstring>       // `std::memcpy`
@@ -33,32 +57,39 @@
 #include <random>        // `std::random_device`
 #include <sstream>       // `std::ostringstream`
 #include <unordered_map> // `std::unordered_map`
+#include <unordered_set> // `std::unordered_set`
+#include <set>           // `std::set`
 #include <vector>        // `std::vector`
 
 #include <string>      // Baseline
 #include <string_view> // Baseline
 
-#if !SZ_DETECT_CPP_11
+#if !_SZ_IS_CPP11
 #error "This test requires C++11 or later."
 #endif
 
-#include <test.hpp> // `levenshtein_baseline`
+#include "test_stringzilla.hpp" // `global_random_generator`, `random_string`
 
 namespace sz = ashvardanian::stringzilla;
 using namespace sz::scripts;
-using sz::literals::operator""_sz;
+using sz::literals::operator""_sv; // for `sz::string_view`
+using sz::literals::operator""_bs; // for `sz::byteset`
 
-/*
+#if _SZ_IS_CPP17
+using namespace std::literals; // for ""sv
+#endif
+
+/**
  *  Instantiate all the templates to make the symbols visible and also check
  *  for weird compilation errors on uncommon paths.
  */
-#if SZ_DETECT_CPP_17 && __cpp_lib_string_view
+#if _SZ_IS_CPP17 && __cpp_lib_string_view
 template class std::basic_string_view<char>;
 #endif
 template class sz::basic_string_slice<char>;
 template class std::basic_string<char>;
 template class sz::basic_string<char>;
-template class sz::basic_charset<char>;
+template class sz::basic_byteset<char>;
 
 template class std::vector<sz::string>;
 template class std::map<sz::string, int>;
@@ -121,7 +152,7 @@ static void test_arithmetical_utilities() {
     assert(sz_size_bit_ceil(1000000000ull) == (1ull << 30));
     assert(sz_size_bit_ceil(2000000000ull) == (1ull << 31));
 
-#if SZ_DETECT_64_BIT
+#if _SZ_IS_64_BIT
     assert(sz_size_bit_ceil(4000000000ull) == (1ull << 32));
     assert(sz_size_bit_ceil(8000000000ull) == (1ull << 33));
     assert(sz_size_bit_ceil(16000000000ull) == (1ull << 34));
@@ -130,11 +161,285 @@ static void test_arithmetical_utilities() {
     assert(sz_size_bit_ceil((1ull << 62) + 1) == (1ull << 63));
     assert(sz_size_bit_ceil((1ull << 63)) == (1ull << 63));
 #endif
+}
 
-    for (sz_u16_t number = 0; number != 256; ++number)
-        for (sz_u16_t divisor = 2; divisor != 256; ++divisor)
-            assert(sz_u8_divide(static_cast<sz_u8_t>(number), static_cast<sz_u8_t>(divisor)) ==
-                   (static_cast<sz_u8_t>(number) / static_cast<sz_u8_t>(divisor)));
+/** @brief Validates `sz_sequence_t` and related construction utilities. */
+static void test_sequence_struct() {
+    // Make sure the sequence helper functions work as expected
+    // for both trivial c-style arrays and more complicated STL containers.
+    {
+        sz_sequence_t sequence;
+        sz_cptr_t strings[] = {"banana", "apple", "cherry"};
+        sz_sequence_from_null_terminated_strings(strings, 3, &sequence);
+        assert(sequence.count == 3);
+        assert("banana"_sv == sequence.get_start(sequence.handle, 0));
+        assert("apple"_sv == sequence.get_start(sequence.handle, 1));
+        assert("cherry"_sv == sequence.get_start(sequence.handle, 2));
+    }
+    // Do the same for STL:
+    {
+        using strings_vector_t = std::vector<std::string>;
+        strings_vector_t strings = {"banana", "apple", "cherry"};
+        sz_sequence_t sequence;
+        sequence.handle = &strings;
+        sequence.count = strings.size();
+        sequence.get_start =
+            reinterpret_cast<sz_sequence_member_start_t>(+[](void *handle, sz_size_t index) noexcept -> sz_cptr_t {
+                auto const &strings = *static_cast<strings_vector_t *>(handle);
+                return strings[index].c_str();
+            });
+        sequence.get_length =
+            reinterpret_cast<sz_sequence_member_length_t>(+[](void *handle, sz_size_t index) noexcept -> sz_size_t {
+                auto const &strings = *static_cast<strings_vector_t *>(handle);
+                return strings[index].size();
+            });
+
+        assert(sequence.count == 3);
+        assert("banana"_sv == sequence.get_start(sequence.handle, 0));
+        assert("apple"_sv == sequence.get_start(sequence.handle, 1));
+        assert("cherry"_sv == sequence.get_start(sequence.handle, 2));
+    }
+}
+
+/** @brief Validates `sz_memory_allocator_t` and related construction utilities. */
+static void test_memory_allocator_struct() {
+    // Our behavior for `malloc(0)` is to return a NULL pointer,
+    // while the standard is implementation-defined.
+    {
+        sz_memory_allocator_t alloc;
+        sz_memory_allocator_init_default(&alloc);
+        assert(alloc.allocate(0, alloc.handle) == nullptr);
+    }
+
+    // Non-NULL allocation
+    {
+        sz_memory_allocator_t alloc;
+        sz_memory_allocator_init_default(&alloc);
+        void *byte = alloc.allocate(1, alloc.handle);
+        assert(byte != nullptr);
+        alloc.free(byte, 1, alloc.handle);
+    }
+
+    // Use a fixed buffer
+    {
+        char buffer[1024];
+        sz_memory_allocator_t alloc;
+        sz_memory_allocator_init_fixed(&alloc, buffer, sizeof(buffer));
+        void *byte = alloc.allocate(1, alloc.handle);
+        assert(byte != nullptr);
+        alloc.free(byte, 1, alloc.handle);
+    }
+}
+
+/** @brief Validates `sz_byteset_t` and related construction utilities. */
+static void test_byteset_struct() {
+    sz_byteset_t s;
+    sz_byteset_init(&s);
+    assert(sz_byteset_contains(&s, 'a') == false);
+    sz_byteset_add(&s, 'a');
+    assert(sz_byteset_contains(&s, 'a') == true);
+    sz_byteset_add(&s, 'z');
+    assert(sz_byteset_contains(&s, 'z') == true);
+    sz_byteset_invert(&s);
+    assert(sz_byteset_contains(&s, 'a') == false);
+    assert(sz_byteset_contains(&s, 'z') == false);
+    assert(sz_byteset_contains(&s, 'b') == true);
+    sz_byteset_init_ascii(&s);
+    assert(sz_byteset_contains(&s, 'A') == true);
+}
+
+/**
+ *  @brief  Hashes a string and compares the output between a serial and hardware-specific SIMD backend.
+ *
+ *  The test covers increasingly long and complex strings, starting with "abcabc..." repetitions and
+ *  progressing towards corner cases like empty strings, all-zero inputs, zero seeds, and so on.
+ */
+static void test_hash_equivalence(                                      //
+    sz_hash_t hash_base, sz_hash_state_init_t init_base,                //
+    sz_hash_state_stream_t stream_base, sz_hash_state_fold_t fold_base, //
+    sz_hash_t hash_simd, sz_hash_state_init_t init_simd,                //
+    sz_hash_state_stream_t stream_simd, sz_hash_state_fold_t fold_simd) {
+
+    auto test_on_seed = [&](std::string text, sz_u64_t seed) {
+        // Compute the entire hash at once, expecting the same output
+        sz_u64_t result_base = hash_base(text.data(), text.size(), seed);
+        sz_u64_t result_simd = hash_simd(text.data(), text.size(), seed);
+        assert(result_base == result_simd);
+
+        // Compare incremental hashing across platforms
+        sz_hash_state_t state_base, state_simd;
+        init_base(&state_base, seed);
+        init_simd(&state_simd, seed);
+        assert(sz_hash_state_equal(&state_base, &state_base) == sz_true_k); // Self-equality
+        assert(sz_hash_state_equal(&state_simd, &state_simd) == sz_true_k); // Self-equality
+        assert(sz_hash_state_equal(&state_base, &state_simd) == sz_true_k); // Same across platforms
+
+        // Let's also create an intentionally misaligned version of the state,
+        // assuming some of the SIMD instructions may require alignment.
+        _SZ_ALIGN64 char state_misaligned_buffer[sizeof(sz_hash_state_t) + 1];
+        sz_hash_state_t &state_misaligned = *reinterpret_cast<sz_hash_state_t *>(state_misaligned_buffer + 1);
+        init_simd(&state_misaligned, seed);
+        assert(sz_hash_state_equal(&state_base, &state_misaligned) == sz_true_k); // Same across platforms
+
+        // Try breaking those strings into arbitrary chunks, expecting the same output in the streaming mode.
+        // The length of each chunk and the number of chunks will be determined with a coin toss.
+        iterate_in_random_slices(text, [&](std::string slice) {
+            stream_base(&state_base, slice.data(), slice.size());
+            stream_simd(&state_simd, slice.data(), slice.size());
+            assert(sz_hash_state_equal(&state_base, &state_simd) == sz_true_k); // Same across platforms
+
+            stream_simd(&state_misaligned, slice.data(), slice.size());
+            assert(sz_hash_state_equal(&state_base, &state_misaligned) == sz_true_k); // Same across platforms
+
+            result_base = fold_base(&state_base);
+            result_simd = fold_simd(&state_simd);
+            assert(result_base == result_simd);
+            sz_u64_t result_misaligned = fold_simd(&state_misaligned);
+            assert(result_base == result_misaligned);
+        });
+    };
+
+    // Let's try different-length strings repeating a "abc" pattern:
+    std::vector<sz_u64_t> seeds = {
+        0u, 42u,                              //
+        std::numeric_limits<sz_u32_t>::max(), //
+        std::numeric_limits<sz_u64_t>::max(), //
+    };
+    for (auto seed : seeds)
+        for (std::size_t copies = 1; copies != 100; ++copies) //
+            test_on_seed(repeat("abc", copies), seed);
+
+    // Let's try truly random inputs of different lengths:
+    for (std::size_t length = 0; length != 200; ++length) {
+        std::string text(length, '\0');
+        randomize_string(&text[0], length);
+        for (auto seed : seeds) test_on_seed(text, seed);
+    }
+}
+
+/**
+ *  @brief  Tests Pseudo-Random Number Generators (PRNGs) ensuring that the same nonce
+ *          produces exactly the same output across different SIMD implementations.
+ */
+static void test_random_generator_equivalence(sz_fill_random_t generate_base, sz_fill_random_t generate_simd) {
+
+    auto test_on_nonce = [&](std::size_t length, sz_u64_t nonce) {
+        std::string text_base(length, '\0');
+        std::string text_simd(length, '\0');
+        generate_base(&text_base[0], static_cast<sz_size_t>(length), nonce);
+        generate_simd(&text_simd[0], static_cast<sz_size_t>(length), nonce);
+        assert(text_base == text_simd);
+    };
+
+    // Let's try different nonces:
+    std::vector<sz_u64_t> nonces = {
+        0u, 42u,                              //
+        std::numeric_limits<sz_u32_t>::max(), //
+        std::numeric_limits<sz_u64_t>::max(), //
+    };
+    std::vector<std::size_t> lengths = {1, 11, 23, 37, 40, 51, 64, 128, 1000};
+    for (auto nonce : nonces)
+        for (auto length : lengths) //
+            test_on_nonce(length, nonce);
+}
+
+static void test_equivalence() {
+
+#if SZ_USE_HASWELL
+    test_hash_equivalence(                                      //
+        sz_hash_serial, sz_hash_state_init_serial,              //
+        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
+        sz_hash_haswell, sz_hash_state_init_haswell,            //
+        sz_hash_state_stream_haswell, sz_hash_state_fold_haswell);
+    test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_haswell);
+#endif
+#if SZ_USE_SKYLAKE
+    test_hash_equivalence(                                      //
+        sz_hash_serial, sz_hash_state_init_serial,              //
+        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
+        sz_hash_skylake, sz_hash_state_init_skylake,            //
+        sz_hash_state_stream_skylake, sz_hash_state_fold_skylake);
+    test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_skylake);
+#endif
+#if SZ_USE_ICE
+    test_hash_equivalence(                                      //
+        sz_hash_serial, sz_hash_state_init_serial,              //
+        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
+        sz_hash_ice, sz_hash_state_init_ice,                    //
+        sz_hash_state_stream_ice, sz_hash_state_fold_ice);
+    test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_ice);
+#endif
+#if SZ_USE_NEON
+    test_hash_equivalence(                                      //
+        sz_hash_serial, sz_hash_state_init_serial,              //
+        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
+        sz_hash_neon, sz_hash_state_init_neon,                  //
+        sz_hash_state_stream_neon, sz_hash_state_fold_neon);
+    test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_neon);
+#endif
+#if SZ_USE_SVE2
+    test_hash_equivalence(                                      //
+        sz_hash_serial, sz_hash_state_init_serial,              //
+        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
+        sz_hash_sve2, sz_hash_state_init_sve2,                  //
+        sz_hash_state_stream_sve2, sz_hash_state_fold_sve2);
+    test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_sve2);
+#endif
+};
+
+/**
+ *  @brief  Tests various ASCII-based methods (e.g., `is_alpha`, `is_digit`)
+ *          provided by `sz::string` and `sz::string_view`.
+ */
+template <typename string_type>
+static void test_ascii_utilities() {
+
+    using str = string_type;
+
+    assert("aaa"_bs.size() == 1ull);
+    assert("\0\0"_bs.size() == 1ull);
+    assert("abc"_bs.size() == 3ull);
+    assert("a\0bc"_bs.size() == 4ull);
+
+    assert(!"abc"_bs.contains('\0'));
+    assert(str("bca").contains_only("abc"_bs));
+
+    assert(!str("").is_alpha());
+    assert(str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ").is_alpha());
+    assert(!str("abc9").is_alpha());
+
+    assert(!str("").is_alnum());
+    assert(str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789").is_alnum());
+    assert(!str("abc!").is_alnum());
+
+    assert(str("").is_ascii());
+    assert(str("\x00x7F").is_ascii());
+    assert(!str("abc123🔥").is_ascii());
+
+    assert(!str("").is_digit());
+    assert(str("0123456789").is_digit());
+    assert(!str("012a").is_digit());
+
+    assert(!str("").is_lower());
+    assert(str("abcdefghijklmnopqrstuvwxyz").is_lower());
+    assert(!str("abcA").is_lower());
+    assert(!str("abc\n").is_lower());
+
+    assert(!str("").is_space());
+    assert(str(" \t\n\r\f\v").is_space());
+    assert(!str(" \t\r\na").is_space());
+
+    assert(!str("").is_upper());
+    assert(str("ABCDEFGHIJKLMNOPQRSTUVWXYZ").is_upper());
+    assert(!str("ABCa").is_upper());
+
+    assert(str("").is_printable());
+    assert(str("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()_+").is_printable());
+    assert(!str("012🔥").is_printable());
+
+    assert(str("").contains_only("abc"_bs));
+    assert(str("abc").contains_only("abc"_bs));
+    assert(!str("abcd").contains_only("abc"_bs));
 }
 
 inline void expect_equality(char const *a, char const *b, std::size_t size) {
@@ -240,14 +545,14 @@ static void test_memory_utilities( //
 #if 0 // TODO:
 
     // We are going to randomly select the "source" and "target" slices of the strings.
-    // For `memcpy` and `memset` the offsets should have uniform ditribution,
+    // For `memcpy` and `memset` the offsets should have uniform distribution,
     // while the length should decay with an exponential distribution.
     // For `memmove` the offset should be uniform, but the "shift" and "length" should
-    // be exponenetial. The exponential distributions should be functions of the cache line width.
+    // be exponential. The exponential distributions should be functions of the cache line width.
     // https://en.cppreference.com/w/cpp/numeric/random/exponential_distribution
     std::string dataset(max_l2_size, '-');
     auto &gen = global_random_generator();
-    uniform_uint8_distribution_t alphabet_distribution('a', 'z');
+    uniform_u8_distribution_t alphabet_distribution('a', 'z');
     std::uniform_int_distribution<std::size_t> length_distribution(1, max_l2_size);
     std::exponential_distribution<double> shift_distribution(1.0 / SZ_CACHE_LINE_WIDTH);
 
@@ -260,14 +565,14 @@ static void test_memory_utilities( //
 }
 
 #define assert_scoped(init, operation, condition) \
-    {                                             \
+    do {                                          \
         init;                                     \
         operation;                                \
         assert(condition);                        \
-    }
+    } while (0)
 
 #define assert_throws(expression, exception_type) \
-    {                                             \
+    do {                                          \
         bool threw = false;                       \
         try {                                     \
             sz_unused(expression);                \
@@ -276,7 +581,7 @@ static void test_memory_utilities( //
             threw = true;                         \
         }                                         \
         assert(threw);                            \
-    }
+    } while (0)
 
 /**
  *  @brief  Invokes different C++ member methods of immutable strings to cover all STL APIs.
@@ -317,8 +622,10 @@ static void test_stl_compatibility_for_reads() {
     assert(str("hello world").substr(6, 100) == "world"); // 106 is beyond the length of the string, but its OK
     assert_throws(str("hello world").substr(100), std::out_of_range);   // 100 is beyond the length of the string
     assert_throws(str("hello world").substr(20, 5), std::out_of_range); // 20 is beyond the length of the string
-    assert_throws(str("hello world").substr(-1, 5), std::out_of_range); // -1 casts to unsigned without any warnings...
-    assert(str("hello world").substr(0, -1) == "hello world");          // -1 casts to unsigned without any warnings...
+#if defined(__GNUC__) && !defined(__NVCC__) // -1 casts to unsigned without warnings on GCC, but not NVCC
+    assert_throws(str("hello world").substr(-1, 5), std::out_of_range);
+    assert(str("hello world").substr(0, -1) == "hello world");
+#endif
 
     // Character search in normal and reverse directions.
     assert(str("hello").find('e') == 1);
@@ -348,6 +655,19 @@ static void test_stl_compatibility_for_reads() {
     assert(str("abbabbaaaaaa").find("aa") == 6);
     assert(str("abcdabcd").substr(2, 4).find("abc") == str::npos);
     assert(str("hello, world!").substr(0, 11).find("world") == str::npos);
+    assert(str("axabbcxcaaabbccc").find("aaabbccc") == 8);
+
+    // Simple repeating patterns - with one "almost match" before an actual match in each direction
+    assert(str("_ab_abc_").find("abc") == 4);
+    assert(str("_abc_ab_").rfind("abc") == 1);
+    assert(str("_abc_abcd_").find("abcd") == 5);
+    assert(str("_abcd_abc_").rfind("abcd") == 1);
+    assert(str("_abcd_abcde_").find("abcde") == 6);
+    assert(str("_abcde_abcd_").rfind("abcde") == 1);
+    assert(str("_abcde_abcdef_").find("abcdef") == 7);
+    assert(str("_abcdef_abcde_").rfind("abcdef") == 1);
+    assert(str("_abcdef_abcdefg_").find("abcdefg") == 8);
+    assert(str("_abcdefg_abcdef_").rfind("abcdefg") == 1);
 
     // ! `rfind` and `find_last_of` are not consistent in meaning of their arguments.
     assert(str("hello").find_first_of("le") == 1);
@@ -426,7 +746,7 @@ static void test_stl_compatibility_for_reads() {
     assert(str("b") >= str("a"));
     assert(str("a") < str("aa"));
 
-#if SZ_DETECT_CPP20 && __cpp_lib_three_way_comparison
+#if _SZ_IS_CPP20 && __cpp_lib_three_way_comparison
     // Spaceship operator instead of conventional comparions.
     assert((str("a") <=> str("b")) == std::strong_ordering::less);
     assert((str("b") <=> str("a")) == std::strong_ordering::greater);
@@ -469,7 +789,7 @@ static void test_stl_compatibility_for_reads() {
     assert(str("hello world").compare(6, 5, "worlds", 5) == 0);    // Substring "world" in both strings
     assert(str("hello world").compare(6, 5, "worlds", 6) < 0);     // Substring "world" is less than "worlds"
 
-#if SZ_DETECT_CPP20 && __cpp_lib_starts_ends_with
+#if _SZ_IS_CPP20 && __cpp_lib_starts_ends_with
     // Prefix and suffix checks against strings.
     assert(str("https://cppreference.com").starts_with(str("http")) == true);
     assert(str("https://cppreference.com").starts_with(str("ftp")) == false);
@@ -489,7 +809,7 @@ static void test_stl_compatibility_for_reads() {
     assert(str("string_view").ends_with("View") == false);
 #endif
 
-#if SZ_DETECT_CPP_23 && __cpp_lib_string_contains
+#if _SZ_IS_CPP23 && __cpp_lib_string_contains
     // Checking basic substring presence.
     assert(str("hello").contains(str("ell")) == true);
     assert(str("hello").contains(str("oll")) == false);
@@ -520,7 +840,7 @@ static void test_stl_compatibility_for_reads() {
     assert(std::hash<str> {}("hello") != 0);
     assert_scoped(std::ostringstream os, os << str("hello"), os.str() == "hello");
 
-#if SZ_DETECT_CPP14
+#if _SZ_IS_CPP14
     // Comparison function objects are a C++14 feature.
     assert(std::equal_to<str> {}("hello", "world") == false);
     assert(std::less<str> {}("hello", "world") == true);
@@ -580,7 +900,7 @@ static void test_stl_compatibility_for_updates() {
 
     // On 32-bit systems the base capacity can be larger than our `z::string::min_capacity`.
     // It's true for MSVC: https://github.com/ashvardanian/StringZilla/issues/168
-    if (SZ_DETECT_64_BIT) assert_scoped(str s = "hello", s.shrink_to_fit(), s.capacity() <= sz::string::min_capacity);
+    if (_SZ_IS_64_BIT) assert_scoped(str s = "hello", s.shrink_to_fit(), s.capacity() <= sz::string::min_capacity);
 
     // Concatenation.
     // Following are missing in strings, but are present in vectors.
@@ -674,7 +994,7 @@ static void test_stl_conversions() {
         sz_unused(sz);
         sz_unused(szv);
     }
-#if SZ_DETECT_CPP_17 && __cpp_lib_string_view
+#if _SZ_IS_CPP17 && __cpp_lib_string_view
     // From STL `string_view` to StringZilla and vice-versa.
     {
         std::string_view stl {"hello"};
@@ -686,6 +1006,10 @@ static void test_stl_conversions() {
 #endif
 }
 
+/**
+ *  @brief The sum of an arithmetic progression.
+ *  @see https://en.wikipedia.org/wiki/Arithmetic_progression
+ */
 inline std::size_t arithmetic_sum(std::size_t first, std::size_t last, std::size_t step = 1) {
     std::size_t n = (last >= first) ? ((last - first) / step + 1) : 0;
     // Return 0 if there are no terms
@@ -746,67 +1070,22 @@ static void test_non_stl_extensions_for_reads() {
     assert((str("hello")[{100, -100}] == ""));
     assert((str("hello")[{-100, -100}] == ""));
 
-    // Computing edit-distances.
-    assert(sz::hamming_distance(str("hello"), str("hello")) == 0);
-    assert(sz::hamming_distance(str("hello"), str("hell")) == 1);
-    assert(sz::hamming_distance(str("abc"), str("adc")) == 1);                // one substitution
-    assert(sz::hamming_distance(str("αβγδ"), str("αxxγδ")) == 2);             // replace Beta UTF8 codepoint
-    assert(sz::hamming_distance_utf8(str("abcdefgh"), str("_bcdefg_")) == 2); // replace ASCI prefix and suffix
-    assert(sz::hamming_distance_utf8(str("αβγδ"), str("αγγδ")) == 1);         // replace Beta UTF8 codepoint
-
-    assert(sz::edit_distance(str("hello"), str("hello")) == 0);
-    assert(sz::edit_distance(str("hello"), str("hell")) == 1);
-    assert(sz::edit_distance(str(""), str("")) == 0);
-    assert(sz::edit_distance(str(""), str("abc")) == 3);
-    assert(sz::edit_distance(str("abc"), str("")) == 3);
-    assert(sz::edit_distance(str("abc"), str("ac")) == 1);                   // one deletion
-    assert(sz::edit_distance(str("abc"), str("a_bc")) == 1);                 // one insertion
-    assert(sz::edit_distance(str("abc"), str("adc")) == 1);                  // one substitution
-    assert(sz::edit_distance(str("ggbuzgjux{}l"), str("gbuzgjux{}l")) == 1); // one insertion (prepended)
-    assert(sz::edit_distance(str("abcdefgABCDEFG"), str("ABCDEFGabcdefg")) == 14);
-
-    assert(sz::edit_distance_utf8(str("hello"), str("hell")) == 1);           // no unicode symbols, just ASCII
-    assert(sz::edit_distance_utf8(str("𠜎 𠜱 𠝹 𠱓"), str("𠜎𠜱𠝹𠱓")) == 3); // add 3 whitespaces in Chinese
-    assert(sz::edit_distance_utf8(str("💖"), str("💗")) == 1);
-
-    assert(sz::edit_distance_utf8(str("αβγδ"), str("αγδ")) == 1);      // insert Beta
-    assert(sz::edit_distance_utf8(str("école"), str("école")) == 2);   // etter "é" as a single character vs "e" + "´"
-    assert(sz::edit_distance_utf8(str("façade"), str("facade")) == 1); // "ç" with cedilla vs. plain
-    assert(sz::edit_distance_utf8(str("Schön"), str("Scho\u0308n")) == 2); // "ö" represented as "o" + "¨"
-    assert(sz::edit_distance_utf8(str("München"), str("Muenchen")) == 2);  // German with umlaut vs. transcription
-    assert(sz::edit_distance_utf8(str("こんにちは世界"), str("こんばんは世界")) == 2);
-
-    // Computing alignment scores.
-    using matrix_t = std::int8_t[256][256];
-    std::vector<std::int8_t> costs_vector = unary_substitution_costs();
-    matrix_t &costs = *reinterpret_cast<matrix_t *>(costs_vector.data());
-
-    assert(sz::alignment_score(str("listen"), str("silent"), costs, -1) == -4);
-    assert(sz::alignment_score(str("abcdefgABCDEFG"), str("ABCDEFGabcdefg"), costs, -1) == -14);
-    assert(sz::alignment_score(str("hello"), str("hello"), costs, -1) == 0);
-    assert(sz::alignment_score(str("hello"), str("hell"), costs, -1) == -1);
-
     // Checksums
-    assert(str("a").checksum() == (std::size_t)'a');
-    assert(str("0").checksum() == (std::size_t)'0');
-    assert(str("0123456789").checksum() == arithmetic_sum('0', '9'));
-    assert(str("abcdefghijklmnopqrstuvwxyz").checksum() == arithmetic_sum('a', 'z'));
-    assert(str("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz").checksum() ==
+    auto accumulate_bytes = [](str const &s) -> std::size_t {
+        return std::accumulate(s.begin(), s.end(), (std::size_t)0,
+                               [](std::size_t sum, char c) { return sum + static_cast<unsigned char>(c); });
+    };
+    assert(str("a").bytesum() == (std::size_t)'a');
+    assert(str("0").bytesum() == (std::size_t)'0');
+    assert(str("0123456789").bytesum() == arithmetic_sum('0', '9'));
+    assert(str("abcdefghijklmnopqrstuvwxyz").bytesum() == arithmetic_sum('a', 'z'));
+    assert(str("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz").bytesum() ==
            arithmetic_sum('a', 'z') * 3);
-
-    // Computing rolling fingerprints.
-    assert(sz::hashes_fingerprint<512>(str("aaaa"), 3).count() == 1);
-    assert(sz::hashes_fingerprint<512>(str("hello"), 4).count() == 2);
-    assert(sz::hashes_fingerprint<512>(str("hello"), 3).count() == 3);
-
-    // No matter how many times one repeats a character, the hash should only contain at most one set bit.
-    assert(sz::hashes_fingerprint<512>(str("a"), 3).count() == 0);
-    assert(sz::hashes_fingerprint<512>(str("aa"), 3).count() == 0);
-    assert(sz::hashes_fingerprint<512>(str("aaa"), 3).count() == 1);
-    assert(sz::hashes_fingerprint<512>(str("aaaa"), 3).count() == 1);
-    assert(sz::hashes_fingerprint<512>(str("aaaaa"), 3).count() == 1);
-
-    // Computing fuzzy search results.
+    assert_scoped(
+        str s =
+            "近来，加文出席微博之夜时对着镜头频繁摆出假笑表情、一度累瘫睡倒在沙发上的照片被广泛转发，引发对他失去童年、"
+            "被过度消费的担忧。八岁的加文，已当网红近六年了，可以说，自懂事以来，他没有过过一天没有名气的日子。",
+        (void)0, s.bytesum() == accumulate_bytes(s));
 }
 
 void test_non_stl_extensions_for_updates() {
@@ -838,9 +1117,9 @@ void test_non_stl_extensions_for_updates() {
     assert_scoped(str s = "hello", s.replace_all("xx", "xx"), s == "hello");
     assert_scoped(str s = "hello", s.replace_all("l", "1"), s == "he11o");
     assert_scoped(str s = "hello", s.replace_all("he", "al"), s == "alllo");
-    assert_scoped(str s = "hello", s.replace_all(sz::char_set("x"), "!"), s == "hello");
-    assert_scoped(str s = "hello", s.replace_all(sz::char_set("o"), "!"), s == "hell!");
-    assert_scoped(str s = "hello", s.replace_all(sz::char_set("ho"), "!"), s == "!ell!");
+    assert_scoped(str s = "hello", s.replace_all("x"_bs, "!"), s == "hello");
+    assert_scoped(str s = "hello", s.replace_all("o"_bs, "!"), s == "hell!");
+    assert_scoped(str s = "hello", s.replace_all("ho"_bs, "!"), s == "!ell!");
 
     // Shorter replacements.
     assert_scoped(str s = "hello", s.replace_all("xx", "x"), s == "hello");
@@ -848,8 +1127,8 @@ void test_non_stl_extensions_for_updates() {
     assert_scoped(str s = "hello", s.replace_all("h", ""), s == "ello");
     assert_scoped(str s = "hello", s.replace_all("o", ""), s == "hell");
     assert_scoped(str s = "hello", s.replace_all("llo", "!"), s == "he!");
-    assert_scoped(str s = "hello", s.replace_all(sz::char_set("x"), ""), s == "hello");
-    assert_scoped(str s = "hello", s.replace_all(sz::char_set("lo"), ""), s == "he");
+    assert_scoped(str s = "hello", s.replace_all("x"_bs, ""), s == "hello");
+    assert_scoped(str s = "hello", s.replace_all("lo"_bs, ""), s == "he");
 
     // Longer replacements.
     assert_scoped(str s = "hello", s.replace_all("xx", "xxx"), s == "hello");
@@ -857,31 +1136,28 @@ void test_non_stl_extensions_for_updates() {
     assert_scoped(str s = "hello", s.replace_all("h", "hh"), s == "hhello");
     assert_scoped(str s = "hello", s.replace_all("o", "oo"), s == "helloo");
     assert_scoped(str s = "hello", s.replace_all("llo", "llo!"), s == "hello!");
-    assert_scoped(str s = "hello", s.replace_all(sz::char_set("x"), "xx"), s == "hello");
-    assert_scoped(str s = "hello", s.replace_all(sz::char_set("lo"), "lo"), s == "helololo");
+    assert_scoped(str s = "hello", s.replace_all("x"_bs, "xx"), s == "hello");
+    assert_scoped(str s = "hello", s.replace_all("lo"_bs, "lo"), s == "helololo");
 
     // Directly mapping bytes using a Look-Up Table.
     sz::look_up_table invert_case = sz::look_up_table::identity();
     for (char c = 'a'; c <= 'z'; c++) invert_case[c] = c - 'a' + 'A';
     for (char c = 'A'; c <= 'Z'; c++) invert_case[c] = c - 'A' + 'a';
-    assert_scoped(str s = "hello", s.transform(invert_case), s == "HELLO");
-    assert_scoped(str s = "HeLLo", s.transform(invert_case), s == "hEllO");
-    assert_scoped(str s = "H-lL0", s.transform(invert_case), s == "h-Ll0");
+    assert_scoped(str s = "hello", s.lookup(invert_case), s == "HELLO");
+    assert_scoped(str s = "HeLLo", s.lookup(invert_case), s == "hEllO");
+    assert_scoped(str s = "H-lL0", s.lookup(invert_case), s == "h-Ll0");
 
     // Concatenation.
     assert(str(str("a") | str("b")) == "ab");
     assert(str(str("a") | str("b") | str("ab")) == "abab");
 
-    assert(str(sz::concatenate("a"_sz, "b"_sz)) == "ab");
-    assert(str(sz::concatenate("a"_sz, "b"_sz, "c"_sz)) == "abc");
+    assert(str(sz::concatenate("a"_sv, "b"_sv)) == "ab");
+    assert(str(sz::concatenate("a"_sv, "b"_sv, "c"_sv)) == "abc");
 
     // Randomization.
     assert(str::random(0).empty());
-    assert(str::random(4, "a") == "aaaa");
-    assert(str::random(4, "aaaa") == "aaaa");
-    assert(str::random(global_random_generator(), 4, "aaaa") == "aaaa");
-    assert_scoped(str s = str::random(128, "ACGT"), (void)s,
-                  s.contains('A') && s.contains('C') && s.contains('G') && s.contains('T'));
+    assert(str::random(4).size() == 4);
+    assert(str::random(4, 42).size() == 4);
 }
 
 /**
@@ -894,13 +1170,13 @@ static void test_constructors() {
         strings.push_back(alphabet.substr(0, alphabet_slice));
     std::vector<sz::string> copies {strings};
     assert(copies.size() == strings.size());
-    for (size_t i = 0; i < copies.size(); i++) {
+    for (size_t i = 0; i < copies.size(); ++i) {
         assert(copies[i].size() == strings[i].size());
         assert(copies[i] == strings[i]);
         for (size_t j = 0; j < strings[i].size(); j++) { assert(copies[i][j] == strings[i][j]); }
     }
     std::vector<sz::string> assignments = strings;
-    for (size_t i = 0; i < assignments.size(); i++) {
+    for (size_t i = 0; i < assignments.size(); ++i) {
         assert(assignments[i].size() == strings[i].size());
         assert(assignments[i] == strings[i]);
         for (size_t j = 0; j < strings[i].size(); j++) { assert(assignments[i][j] == strings[i][j]); }
@@ -968,12 +1244,12 @@ static void test_memory_stability_for_length(std::size_t len = 1ull << 10) {
     using string = sz::basic_string<char, accounting_allocator>;
     string base;
 
-    for (std::size_t i = 0; i < len; i++) base.push_back('c');
+    for (std::size_t i = 0; i < len; ++i) base.push_back('c');
     assert(base.length() == len);
 
     // Do copies leak?
     assert_balanced_memory([&]() {
-        for (std::size_t i = 0; i < iterations; i++) {
+        for (std::size_t i = 0; i < iterations; ++i) {
             string copy(base);
             assert(copy.length() == len);
             assert(copy == base);
@@ -982,7 +1258,7 @@ static void test_memory_stability_for_length(std::size_t len = 1ull << 10) {
 
     // How about assignments?
     assert_balanced_memory([&]() {
-        for (std::size_t i = 0; i < iterations; i++) {
+        for (std::size_t i = 0; i < iterations; ++i) {
             string copy;
             copy = base;
             assert(copy.length() == len);
@@ -992,7 +1268,7 @@ static void test_memory_stability_for_length(std::size_t len = 1ull << 10) {
 
     // How about the move constructor?
     assert_balanced_memory([&]() {
-        for (std::size_t i = 0; i < iterations; i++) {
+        for (std::size_t i = 0; i < iterations; ++i) {
             string unique_item(base);
             assert(unique_item.length() == len);
             assert(unique_item == base);
@@ -1004,7 +1280,7 @@ static void test_memory_stability_for_length(std::size_t len = 1ull << 10) {
 
     // And the move assignment operator with an empty target payload?
     assert_balanced_memory([&]() {
-        for (std::size_t i = 0; i < iterations; i++) {
+        for (std::size_t i = 0; i < iterations; ++i) {
             string unique_item(base);
             string copy;
             copy = std::move(unique_item);
@@ -1015,7 +1291,7 @@ static void test_memory_stability_for_length(std::size_t len = 1ull << 10) {
 
     // And move assignment where the target had a payload?
     assert_balanced_memory([&]() {
-        for (std::size_t i = 0; i < iterations; i++) {
+        for (std::size_t i = 0; i < iterations; ++i) {
             string unique_item(base);
             string copy;
             for (std::size_t j = 0; j < 317; j++) copy.push_back('q');
@@ -1062,15 +1338,15 @@ static void test_updates(std::size_t repetitions = 1024) {
  */
 static void test_comparisons() {
     // Comparing relative order of the strings
-    assert("a"_sz.compare("a") == 0);
-    assert("a"_sz.compare("ab") == -1);
-    assert("ab"_sz.compare("a") == 1);
-    assert("a"_sz.compare("a\0"_sz) == -1);
-    assert("a\0"_sz.compare("a") == 1);
-    assert("a\0"_sz.compare("a\0"_sz) == 0);
-    assert("a"_sz == "a"_sz);
-    assert("a"_sz != "a\0"_sz);
-    assert("a\0"_sz == "a\0"_sz);
+    assert("a"_sv.compare("a") == 0);
+    assert("a"_sv.compare("ab") == -1);
+    assert("ab"_sv.compare("a") == 1);
+    assert("a"_sv.compare("a\0"_sv) == -1);
+    assert("a\0"_sv.compare("a") == 1);
+    assert("a\0"_sv.compare("a\0"_sv) == 0);
+    assert("a"_sv == "a"_sv);
+    assert("a"_sv != "a\0"_sv);
+    assert("a\0"_sv == "a\0"_sv);
 }
 
 /**
@@ -1099,57 +1375,57 @@ static void test_search() {
     assert(sz::string_view(sz::ascii_printables(), sizeof(sz::ascii_printables())).find_first_of("~") !=
            sz::string_view::npos);
 
-    assert("aabaa"_sz.remove_prefix("a") == "abaa");
-    assert("aabaa"_sz.remove_suffix("a") == "aaba");
-    assert("aabaa"_sz.lstrip(sz::char_set {"a"}) == "baa");
-    assert("aabaa"_sz.rstrip(sz::char_set {"a"}) == "aab");
-    assert("aabaa"_sz.strip(sz::char_set {"a"}) == "b");
+    assert("aabaa"_sv.remove_prefix("a") == "abaa");
+    assert("aabaa"_sv.remove_suffix("a") == "aaba");
+    assert("aabaa"_sv.lstrip("a"_bs) == "baa");
+    assert("aabaa"_sv.rstrip("a"_bs) == "aab");
+    assert("aabaa"_sv.strip("a"_bs) == "b");
 
     // Check more advanced composite operations
-    assert("abbccc"_sz.partition('b').before.size() == 1);
-    assert("abbccc"_sz.partition("bb").before.size() == 1);
-    assert("abbccc"_sz.partition("bb").match.size() == 2);
-    assert("abbccc"_sz.partition("bb").after.size() == 3);
-    assert("abbccc"_sz.partition("bb").before == "a");
-    assert("abbccc"_sz.partition("bb").match == "bb");
-    assert("abbccc"_sz.partition("bb").after == "ccc");
-    assert("abb ccc"_sz.partition(sz::whitespaces_set()).after == "ccc");
+    assert("abbccc"_sv.partition('b').before.size() == 1);
+    assert("abbccc"_sv.partition("bb").before.size() == 1);
+    assert("abbccc"_sv.partition("bb").match.size() == 2);
+    assert("abbccc"_sv.partition("bb").after.size() == 3);
+    assert("abbccc"_sv.partition("bb").before == "a");
+    assert("abbccc"_sv.partition("bb").match == "bb");
+    assert("abbccc"_sv.partition("bb").after == "ccc");
+    assert("abb ccc"_sv.partition(sz::whitespaces_set()).after == "ccc");
 
     // Check ranges of search matches
-    assert("hello"_sz.find_all("l").size() == 2);
-    assert("hello"_sz.rfind_all("l").size() == 2);
+    assert("hello"_sv.find_all("l").size() == 2);
+    assert("hello"_sv.rfind_all("l").size() == 2);
 
-    assert(""_sz.find_all(".", sz::include_overlaps_type {}).size() == 0);
-    assert(""_sz.find_all(".", sz::exclude_overlaps_type {}).size() == 0);
-    assert("."_sz.find_all(".", sz::include_overlaps_type {}).size() == 1);
-    assert("."_sz.find_all(".", sz::exclude_overlaps_type {}).size() == 1);
-    assert(".."_sz.find_all(".", sz::include_overlaps_type {}).size() == 2);
-    assert(".."_sz.find_all(".", sz::exclude_overlaps_type {}).size() == 2);
-    assert(""_sz.rfind_all(".", sz::include_overlaps_type {}).size() == 0);
-    assert(""_sz.rfind_all(".", sz::exclude_overlaps_type {}).size() == 0);
-    assert("."_sz.rfind_all(".", sz::include_overlaps_type {}).size() == 1);
-    assert("."_sz.rfind_all(".", sz::exclude_overlaps_type {}).size() == 1);
-    assert(".."_sz.rfind_all(".", sz::include_overlaps_type {}).size() == 2);
-    assert(".."_sz.rfind_all(".", sz::exclude_overlaps_type {}).size() == 2);
+    assert(""_sv.find_all(".", sz::include_overlaps_type {}).size() == 0);
+    assert(""_sv.find_all(".", sz::exclude_overlaps_type {}).size() == 0);
+    assert("."_sv.find_all(".", sz::include_overlaps_type {}).size() == 1);
+    assert("."_sv.find_all(".", sz::exclude_overlaps_type {}).size() == 1);
+    assert(".."_sv.find_all(".", sz::include_overlaps_type {}).size() == 2);
+    assert(".."_sv.find_all(".", sz::exclude_overlaps_type {}).size() == 2);
+    assert(""_sv.rfind_all(".", sz::include_overlaps_type {}).size() == 0);
+    assert(""_sv.rfind_all(".", sz::exclude_overlaps_type {}).size() == 0);
+    assert("."_sv.rfind_all(".", sz::include_overlaps_type {}).size() == 1);
+    assert("."_sv.rfind_all(".", sz::exclude_overlaps_type {}).size() == 1);
+    assert(".."_sv.rfind_all(".", sz::include_overlaps_type {}).size() == 2);
+    assert(".."_sv.rfind_all(".", sz::exclude_overlaps_type {}).size() == 2);
 
-    assert("a.b.c.d"_sz.find_all(".").size() == 3);
-    assert("a.,b.,c.,d"_sz.find_all(".,").size() == 3);
-    assert("a.,b.,c.,d"_sz.rfind_all(".,").size() == 3);
-    assert("a.b,c.d"_sz.find_all(sz::char_set(".,")).size() == 3);
-    assert("a...b...c"_sz.rfind_all("..").size() == 4);
-    assert("a...b...c"_sz.rfind_all("..", sz::include_overlaps_type {}).size() == 4);
-    assert("a...b...c"_sz.rfind_all("..", sz::exclude_overlaps_type {}).size() == 2);
+    assert("a.b.c.d"_sv.find_all(".").size() == 3);
+    assert("a.,b.,c.,d"_sv.find_all(".,").size() == 3);
+    assert("a.,b.,c.,d"_sv.rfind_all(".,").size() == 3);
+    assert("a.b,c.d"_sv.find_all(".,"_bs).size() == 3);
+    assert("a...b...c"_sv.rfind_all("..").size() == 4);
+    assert("a...b...c"_sv.rfind_all("..", sz::include_overlaps_type {}).size() == 4);
+    assert("a...b...c"_sv.rfind_all("..", sz::exclude_overlaps_type {}).size() == 2);
 
-    auto finds = "a.b.c"_sz.find_all(sz::char_set("abcd")).template to<std::vector<std::string>>();
+    auto finds = "a.b.c"_sv.find_all("abcd"_bs).template to<std::vector<std::string>>();
     assert(finds.size() == 3);
     assert(finds[0] == "a");
 
-    auto rfinds = "a.b.c"_sz.rfind_all(sz::char_set("abcd")).template to<std::vector<std::string>>();
+    auto rfinds = "a.b.c"_sv.rfind_all("abcd"_bs).template to<std::vector<std::string>>();
     assert(rfinds.size() == 3);
     assert(rfinds[0] == "c");
 
     {
-        auto splits = ".a..c."_sz.split(sz::char_set(".")).template to<std::vector<std::string>>();
+        auto splits = ".a..c."_sv.split("."_bs).template to<std::vector<std::string>>();
         assert(splits.size() == 5);
         assert(splits[0] == "");
         assert(splits[1] == "a");
@@ -1157,36 +1433,36 @@ static void test_search() {
     }
 
     {
-        auto splits = "line1\nline2\nline3"_sz.split("line3").template to<std::vector<std::string>>();
+        auto splits = "line1\nline2\nline3"_sv.split("line3").template to<std::vector<std::string>>();
         assert(splits.size() == 2);
         assert(splits[0] == "line1\nline2\n");
         assert(splits[1] == "");
     }
 
-    assert(""_sz.split(".").size() == 1);
-    assert(""_sz.rsplit(".").size() == 1);
+    assert(""_sv.split(".").size() == 1);
+    assert(""_sv.rsplit(".").size() == 1);
 
-    assert("hello"_sz.split("l").size() == 3);
-    assert("hello"_sz.rsplit("l").size() == 3);
-    assert(*advanced("hello"_sz.split("l").begin(), 0) == "he");
-    assert(*advanced("hello"_sz.rsplit("l").begin(), 0) == "o");
-    assert(*advanced("hello"_sz.split("l").begin(), 1) == "");
-    assert(*advanced("hello"_sz.rsplit("l").begin(), 1) == "");
-    assert(*advanced("hello"_sz.split("l").begin(), 2) == "o");
-    assert(*advanced("hello"_sz.rsplit("l").begin(), 2) == "he");
+    assert("hello"_sv.split("l").size() == 3);
+    assert("hello"_sv.rsplit("l").size() == 3);
+    assert(*advanced("hello"_sv.split("l").begin(), 0) == "he");
+    assert(*advanced("hello"_sv.rsplit("l").begin(), 0) == "o");
+    assert(*advanced("hello"_sv.split("l").begin(), 1) == "");
+    assert(*advanced("hello"_sv.rsplit("l").begin(), 1) == "");
+    assert(*advanced("hello"_sv.split("l").begin(), 2) == "o");
+    assert(*advanced("hello"_sv.rsplit("l").begin(), 2) == "he");
 
-    assert("a.b.c.d"_sz.split(".").size() == 4);
-    assert("a.b.c.d"_sz.rsplit(".").size() == 4);
-    assert(*("a.b.c.d"_sz.split(".").begin()) == "a");
-    assert(*("a.b.c.d"_sz.rsplit(".").begin()) == "d");
-    assert(*advanced("a.b.c.d"_sz.split(".").begin(), 1) == "b");
-    assert(*advanced("a.b.c.d"_sz.rsplit(".").begin(), 1) == "c");
-    assert(*advanced("a.b.c.d"_sz.split(".").begin(), 3) == "d");
-    assert(*advanced("a.b.c.d"_sz.rsplit(".").begin(), 3) == "a");
-    assert("a.b.,c,d"_sz.split(".,").size() == 2);
-    assert("a.b,c.d"_sz.split(sz::char_set(".,")).size() == 4);
+    assert("a.b.c.d"_sv.split(".").size() == 4);
+    assert("a.b.c.d"_sv.rsplit(".").size() == 4);
+    assert(*("a.b.c.d"_sv.split(".").begin()) == "a");
+    assert(*("a.b.c.d"_sv.rsplit(".").begin()) == "d");
+    assert(*advanced("a.b.c.d"_sv.split(".").begin(), 1) == "b");
+    assert(*advanced("a.b.c.d"_sv.rsplit(".").begin(), 1) == "c");
+    assert(*advanced("a.b.c.d"_sv.split(".").begin(), 3) == "d");
+    assert(*advanced("a.b.c.d"_sv.rsplit(".").begin(), 3) == "a");
+    assert("a.b.,c,d"_sv.split(".,").size() == 2);
+    assert("a.b,c.d"_sv.split(".,"_bs).size() == 4);
 
-    auto rsplits = ".a..c."_sz.rsplit(sz::char_set(".")).template to<std::vector<std::string>>();
+    auto rsplits = ".a..c."_sv.rsplit("."_bs).template to<std::vector<std::string>>();
     assert(rsplits.size() == 5);
     assert(rsplits[0] == "");
     assert(rsplits[1] == "c");
@@ -1205,7 +1481,7 @@ static void test_search() {
     }
 }
 
-#if SZ_DETECT_CPP_17 && __cpp_lib_string_view
+#if _SZ_IS_CPP17 && __cpp_lib_string_view
 
 /**
  *  Evaluates the correctness of a "matcher", searching for all the occurrences of the `needle_stl`
@@ -1397,100 +1673,12 @@ static void test_search_with_misaligned_repetitions() {
 #endif
 
 /**
- *  @brief  Tests the correctness of the string class Levenshtein distance computation,
- *          as well as the similarity scoring functions for bioinformatics-like workloads.
- */
-static void test_levenshtein_distances() {
-    struct {
-        char const *left;
-        char const *right;
-        std::size_t distance;
-    } explicit_cases[] = {
-        {"listen", "silent", 4},
-        {"", "", 0},
-        {"", "abc", 3},
-        {"abc", "", 3},
-        {"abc", "ac", 1},                   // one deletion
-        {"abc", "a_bc", 1},                 // one insertion
-        {"abc", "adc", 1},                  // one substitution
-        {"abc", "abc", 0},                  // same string
-        {"ggbuzgjux{}l", "gbuzgjux{}l", 1}, // one insertion (prepended)
-    };
-
-    using matrix_t = std::int8_t[256][256];
-    std::vector<std::int8_t> costs_vector = unary_substitution_costs();
-    matrix_t &costs = *reinterpret_cast<matrix_t *>(costs_vector.data());
-
-    auto print_failure = [&](char const *name, sz::string const &l, sz::string const &r, std::size_t expected,
-                             std::size_t received) {
-        char const *ellipsis = l.length() > 22 || r.length() > 22 ? "..." : "";
-        std::printf("%s error: distance(\"%.22s%s\", \"%.22s%s\"); got %zd, expected %zd\n", //
-                    name, l.c_str(), ellipsis, r.c_str(), ellipsis, received, expected);
-    };
-
-    auto test_distance = [&](sz::string const &l, sz::string const &r, std::size_t expected) {
-        auto received = sz::edit_distance(l, r);
-        auto received_score = sz::alignment_score(l, r, costs, -1);
-        if (received != expected) print_failure("Levenshtein", l, r, expected, received);
-        if ((std::size_t)(-received_score) != expected) print_failure("Scoring", l, r, expected, received_score);
-        // The distance relation commutes
-        received = sz::edit_distance(r, l);
-        received_score = sz::alignment_score(r, l, costs, -1);
-        if (received != expected) print_failure("Levenshtein", r, l, expected, received);
-        if ((std::size_t)(-received_score) != expected) print_failure("Scoring", r, l, expected, received_score);
-    };
-
-    for (auto explicit_case : explicit_cases)
-        test_distance(sz::string(explicit_case.left), sz::string(explicit_case.right), explicit_case.distance);
-
-    // Gradually increasing the length of the strings.
-    for (std::size_t length = 0; length != 1000; ++length) {
-        sz::string left, right;
-        for (std::size_t i = 0; i != length; ++i) left.push_back('a'), right.push_back('b');
-        test_distance(left, right, length);
-    }
-
-    // Randomized tests
-    struct {
-        std::size_t length_upper_bound;
-        std::size_t iterations;
-    } fuzzy_cases[] = {
-        {10, 1000},
-        {100, 100},
-        {1000, 10},
-    };
-    std::mt19937 &generator = global_random_generator();
-    sz::string first, second;
-    for (auto fuzzy_case : fuzzy_cases) {
-        char alphabet[4] = {'a', 'c', 'g', 't'};
-        std::uniform_int_distribution<std::size_t> length_distribution(0, fuzzy_case.length_upper_bound);
-        for (std::size_t i = 0; i != fuzzy_case.iterations; ++i) {
-            std::size_t first_length = length_distribution(generator);
-            std::size_t second_length = length_distribution(generator);
-            std::generate_n(std::back_inserter(first), first_length, [&]() { return alphabet[generator() % 4]; });
-            std::generate_n(std::back_inserter(second), second_length, [&]() { return alphabet[generator() % 4]; });
-            test_distance(first, second,
-                          levenshtein_baseline(first.c_str(), first.length(), second.c_str(), second.length()));
-
-            // Try computing the distance on equal-length chunks of those strings.
-            first.resize(std::min(first_length, second_length));
-            second.resize(std::min(first_length, second_length));
-            test_distance(first, second,
-                          levenshtein_baseline(first.c_str(), first.length(), second.c_str(), second.length()));
-
-            // Discard before the next iteration.
-            first.clear();
-            second.clear();
-        }
-    }
-}
-
-/**
  *  Evaluates the correctness of look-up table transforms using random lookup tables.
  *
- *  @param misalignment The number of bytes to misalign the haystack within the cacheline.
+ *  @param lookup_tables_to_try The number of random lookup tables to try.
+ *  @param slices_per_table The number of random inputs to test per lookup table.
  */
-void test_replacements(std::size_t lookup_tables_to_try = 128, std::size_t slices_per_table = 256) {
+void test_replacements(std::size_t lookup_tables_to_try = 32, std::size_t slices_per_table = 16) {
 
     std::string body, transformed;
     body.resize(1024 * 1024); // 1MB
@@ -1500,14 +1688,14 @@ void test_replacements(std::size_t lookup_tables_to_try = 128, std::size_t slice
     for (std::size_t lookup_table_variation = 0; lookup_table_variation != lookup_tables_to_try;
          ++lookup_table_variation) {
         sz::look_up_table lut;
-        for (std::size_t i = 0; i < 256; i++) lut[(char)i] = (char)(std::rand() % 256);
+        for (std::size_t i = 0; i < 256; ++i) lut[(char)i] = (char)(std::rand() % 256);
 
         for (std::size_t slice_idx = 0; slice_idx != slices_per_table; ++slice_idx) {
             std::size_t slice_offset = std::rand() % (body.length());
             std::size_t slice_length = std::rand() % (body.length() - slice_offset);
 
-            sz::transform<char>(sz::string_view(body.data() + slice_offset, slice_length), lut,
-                                const_cast<char *>(transformed.data()) + slice_offset);
+            sz::lookup<char>(sz::string_view(body.data() + slice_offset, slice_length), lut,
+                             const_cast<char *>(transformed.data()) + slice_offset);
             for (std::size_t i = 0; i != slice_length; ++i) {
                 assert(transformed[slice_offset + i] == lut[body[slice_offset + i]]);
             }
@@ -1516,29 +1704,161 @@ void test_replacements(std::size_t lookup_tables_to_try = 128, std::size_t slice
 }
 
 /**
- *  @brief  Tests sorting functionality.
+ *  @brief  Tests array sorting functionality, such as `argsort`, `sort`, and `sorted`.
+ *
+ *  Tries to sort incrementally complex inputs, such as strings of varying lengths, with many equal inputs.
+ *  1. Basic tests with predetermined orders.
+ *  2. Test on long strings of identical length.
+ *  3. Test on random very small strings of varying lengths, likely with many equal inputs.
+ *  4. Test on random strings of varying lengths.
+ *  5. Test on random strings of varying lengths with zero characters.
  */
-static void test_sequence_algorithms() {
+static void test_sorting_algorithms() {
     using strs_t = std::vector<std::string>;
     using order_t = std::vector<sz::sorted_idx_t>;
 
-    assert_scoped(strs_t x({"a", "b", "c", "d"}), (void)0, sz::sorted_order(x) == order_t({0u, 1u, 2u, 3u}));
-    assert_scoped(strs_t x({"b", "c", "d", "a"}), (void)0, sz::sorted_order(x) == order_t({3u, 0u, 1u, 2u}));
-    assert_scoped(strs_t x({"b", "a", "d", "c"}), (void)0, sz::sorted_order(x) == order_t({1u, 0u, 3u, 2u}));
+    // Basic tests with predetermined orders.
+    assert_scoped(strs_t x({"a", "b", "c", "d"}), (void)0, sz::argsort(x) == order_t({0u, 1u, 2u, 3u}));
+    assert_scoped(strs_t x({"b", "c", "d", "a"}), (void)0, sz::argsort(x) == order_t({3u, 0u, 1u, 2u}));
+    assert_scoped(strs_t x({"b", "a", "d", "c"}), (void)0, sz::argsort(x) == order_t({1u, 0u, 3u, 2u}));
 
-    // Generate random strings of different lengths.
-    for (std::size_t dataset_size : {10, 100, 1000, 10000}) {
-        // Build the dataset.
+    // Test on long strings of identical length.
+    for (std::size_t string_length : {5u, 25u}) {
+        for (std::size_t dataset_size : {10u, 100u, 1000u, 10000u}) {
+            strs_t dataset;
+            dataset.reserve(dataset_size);
+            for (std::size_t i = 0; i < dataset_size; ++i)
+                dataset.push_back(sz::scripts::random_string(string_length, "ab", 2));
+
+            // Run several iterations of fuzzy tests.
+            for (std::size_t experiment_idx = 0; experiment_idx < 10; ++experiment_idx) {
+                std::shuffle(dataset.begin(), dataset.end(), global_random_generator());
+                auto order = sz::argsort(dataset);
+                for (std::size_t i = 1; i < dataset.size(); ++i) assert(dataset[order[i - 1]] <= dataset[order[i]]);
+            }
+        }
+    }
+
+    // Test on random very small strings of varying lengths, likely with many equal inputs.
+    for (std::size_t dataset_size : {10u, 100u, 1000u, 10000u}) {
         strs_t dataset;
-        for (std::size_t i = 0; i != dataset_size; ++i)
-            dataset.push_back(sz::scripts::random_string(i % 32, "abcdefghijklmnopqrstuvwxyz", 26));
+        dataset.reserve(dataset_size);
+        for (std::size_t i = 0; i < dataset_size; ++i) dataset.push_back(sz::scripts::random_string(i % 6, "ab", 2));
 
         // Run several iterations of fuzzy tests.
-        for (std::size_t experiment_idx = 0; experiment_idx != 10; ++experiment_idx) {
+        for (std::size_t experiment_idx = 0; experiment_idx < 10; ++experiment_idx) {
             std::shuffle(dataset.begin(), dataset.end(), global_random_generator());
-            auto order = sz::sorted_order(dataset);
-            for (std::size_t i = 1; i != dataset_size; ++i) { assert(dataset[order[i - 1]] <= dataset[order[i]]); }
+            auto order = sz::argsort(dataset);
+            for (std::size_t i = 1; i < dataset_size; ++i) { assert(dataset[order[i - 1]] <= dataset[order[i]]); }
         }
+    }
+
+    // Test on random strings of varying lengths.
+    for (std::size_t dataset_size : {10u, 100u, 1000u, 10000u}) {
+        strs_t dataset;
+        dataset.reserve(dataset_size);
+        constexpr std::size_t min_length = 6;
+        for (std::size_t i = 0; i < dataset_size; ++i)
+            dataset.push_back(sz::scripts::random_string(min_length + i % 32, "ab", 2));
+
+        // Run several iterations of fuzzy tests.
+        for (std::size_t experiment_idx = 0; experiment_idx < 10; ++experiment_idx) {
+            std::shuffle(dataset.begin(), dataset.end(), global_random_generator());
+            auto order = sz::argsort(dataset);
+            for (std::size_t i = 1; i < dataset_size; ++i) { assert(dataset[order[i - 1]] <= dataset[order[i]]); }
+        }
+    }
+
+    // Test on random strings of varying lengths with zero characters.
+    for (std::size_t dataset_size : {10u, 100u, 1000u, 10000u}) {
+        strs_t dataset;
+        dataset.reserve(dataset_size);
+        for (std::size_t i = 0; i < dataset_size; ++i) dataset.push_back(sz::scripts::random_string(i % 32, "ab\0", 3));
+
+        // Run several iterations of fuzzy tests.
+        for (std::size_t experiment_idx = 0; experiment_idx < 10; ++experiment_idx) {
+            std::shuffle(dataset.begin(), dataset.end(), global_random_generator());
+            auto order = sz::argsort(dataset);
+            for (std::size_t i = 1; i < dataset_size; ++i) { assert(dataset[order[i - 1]] <= dataset[order[i]]); }
+        }
+    }
+}
+
+/**
+ *  @brief  Tests array intersection functionality.
+ */
+static void test_intersecting_algorithms() {
+    using strs_t = std::vector<std::string>;
+    using result_t = sz::intersect_result_t;
+
+    // The mapping aren't guaranteed to be in any specific order, so we will sort them for comparisons.
+    using idx_pair_t = std::pair<std::size_t, std::size_t>;
+    using idx_pairs_t = std::set<idx_pair_t>;
+    auto to_pairs = [](result_t const &result) -> idx_pairs_t {
+        idx_pairs_t pairs;
+        for (std::size_t i = 0; i < result.first_offsets.size(); ++i)
+            pairs.insert({result.first_offsets[i], result.second_offsets[i]});
+        return pairs;
+    };
+
+    // Predetermined simple cases
+    {
+        strs_t abcd({"a", "b", "c", "d"});
+        strs_t dcba({"d", "c", "b", "a"});
+        strs_t abs({"a", "b", "s"});
+        strs_t empty;
+        result_t result;
+        // Empty sets
+        {
+            result = sz::intersect(empty, empty);
+            assert(result.first_offsets.size() == 0 && result.second_offsets.size() == 0);
+            result = sz::intersect(abcd, empty);
+            assert(result.first_offsets.size() == 0 && result.second_offsets.size() == 0);
+        }
+        // Identity check
+        {
+            result = sz::intersect(abcd, abcd);
+            assert(result.first_offsets.size() == 4 && result.second_offsets.size() == 4);
+            assert(to_pairs(result) == idx_pairs_t({{0u, 0u}, {1u, 1u}, {2u, 2u}, {3u, 3u}}));
+        }
+        // Identical size, different order
+        {
+            result = sz::intersect(abcd, dcba);
+            assert(result.first_offsets.size() == 4 && result.second_offsets.size() == 4);
+            assert(to_pairs(result) == idx_pairs_t({{0u, 3u}, {1u, 2u}, {2u, 1u}, {3u, 0u}}));
+        }
+        // Different sets
+        {
+            result = sz::intersect(abcd, abs);
+            assert(result.first_offsets.size() == 2 && result.second_offsets.size() == 2);
+            assert(to_pairs(result) == idx_pairs_t({{0u, 0u}, {1u, 1u}}));
+        }
+    }
+
+    // Generate random strings
+    struct {
+        std::size_t min_length;
+        std::size_t max_length;
+        std::size_t count_strings;
+    } experiments[] = {
+        {10, 10, 100},
+        {15, 15, 1000},
+        {5, 30, 2000},
+    };
+    for (auto experiment : experiments) {
+        std::unordered_set<std::string> random_strings;
+        while (random_strings.size() < experiment.count_strings)
+            random_strings.insert(sz::scripts::random_string(
+                experiment.min_length + std::rand() % (experiment.max_length - experiment.min_length + 1), //
+                "ab", 2));
+
+        strs_t all_strings(random_strings.begin(), random_strings.end());
+        strs_t first_half(all_strings.begin(), all_strings.begin() + all_strings.size() / 2);
+
+        // Try different joins
+        result_t result;
+        result = sz::intersect(all_strings, first_half);
+        assert(result.first_offsets.size() == first_half.size() && result.second_offsets.size() == first_half.size());
     }
 }
 
@@ -1551,8 +1871,8 @@ static void test_stl_containers() {
     assert(sorted_words_sz.empty());
     assert(words_sz.empty());
 
-    std::map<std::string, int, sz::string_view_less> sorted_words_stl;
-    std::unordered_map<std::string, int, sz::string_view_hash, sz::string_view_equal_to> words_stl;
+    std::map<std::string, int, sz::less> sorted_words_stl;
+    std::unordered_map<std::string, int, sz::hash, sz::equal_to> words_stl;
     assert(sorted_words_stl.empty());
     assert(words_stl.empty());
 }
@@ -1562,18 +1882,62 @@ int main(int argc, char const **argv) {
     // Let's greet the user nicely
     sz_unused(argc && argv);
     std::printf("Hi, dear tester! You look nice today!\n");
-    std::printf("- Uses AVX2: %s \n", SZ_USE_X86_AVX2 ? "yes" : "no");
-    std::printf("- Uses AVX512: %s \n", SZ_USE_X86_AVX512 ? "yes" : "no");
-    std::printf("- Uses NEON: %s \n", SZ_USE_ARM_NEON ? "yes" : "no");
-    std::printf("- Uses SVE: %s \n", SZ_USE_ARM_SVE ? "yes" : "no");
+    std::printf("- Uses Haswell: %s \n", SZ_USE_HASWELL ? "yes" : "no");
+    std::printf("- Uses Skylake: %s \n", SZ_USE_SKYLAKE ? "yes" : "no");
+    std::printf("- Uses Ice Lake: %s \n", SZ_USE_ICE ? "yes" : "no");
+    std::printf("- Uses NEON: %s \n", SZ_USE_NEON ? "yes" : "no");
+    std::printf("- Uses SVE: %s \n", SZ_USE_SVE ? "yes" : "no");
+    std::printf("- Uses SVE2: %s \n", SZ_USE_SVE2 ? "yes" : "no");
+    std::printf("- Uses OpenMP: %s \n", SZ_USE_OPENMP ? "yes" : "no");
+    std::printf("- Uses CUDA: %s \n", SZ_USE_CUDA ? "yes" : "no");
+
+#if SZ_USE_CUDA
+    cudaError_t cuda_error = cudaFree(0); // Force context initialization
+    if (cuda_error != cudaSuccess) {
+        std::printf("CUDA initialization error: %s\n", cudaGetErrorString(cuda_error));
+        return 1;
+    }
+    int device_count = 0;
+    cuda_error = cudaGetDeviceCount(&device_count);
+    if (cuda_error != cudaSuccess) {
+        std::printf("CUDA error: %s\n", cudaGetErrorString(cuda_error));
+        return 1;
+    }
+    std::printf("CUDA device count: %d\n", device_count);
+    if (device_count == 0) {
+        std::printf("No CUDA devices found.\n");
+        return 1;
+    }
+    std::printf("- CUDA devices:\n");
+    cudaDeviceProp prop;
+    for (int i = 0; i < device_count; ++i) {
+        cuda_error = cudaGetDeviceProperties(&prop, i);
+        std::printf("  - %s\n", prop.name);
+    }
+    std::printf("- CUDA managed memory support: %s\n", prop.managedMemory == 1 ? "yes" : "no");
+    std::printf("- CUDA unified memory support: %s\n", prop.unifiedAddressing == 1 ? "yes" : "no");
+#endif
 
     // Basic utilities
     test_arithmetical_utilities();
+    test_sequence_struct();
+    test_memory_allocator_struct();
+    test_byteset_struct();
+    test_equivalence();
+
+    // Sequences of strings
+    test_sorting_algorithms();
+    test_intersecting_algorithms();
+    test_stl_containers();
+
+    // Core APIs
+    test_ascii_utilities<sz::string>();
+    test_ascii_utilities<sz::string_view>();
     test_memory_utilities();
     test_replacements();
 
 // Compatibility with STL
-#if SZ_DETECT_CPP_17 && __cpp_lib_string_view
+#if _SZ_IS_CPP17 && __cpp_lib_string_view
     test_stl_compatibility_for_reads<std::string_view>();
 #endif
     test_stl_compatibility_for_reads<std::string>();
@@ -1598,16 +1962,9 @@ int main(int argc, char const **argv) {
     test_stl_conversions();
     test_comparisons();
     test_search();
-#if SZ_DETECT_CPP_17 && __cpp_lib_string_view
+#if _SZ_IS_CPP17 && __cpp_lib_string_view
     test_search_with_misaligned_repetitions();
 #endif
-
-    // Similarity measures and fuzzy search
-    test_levenshtein_distances();
-
-    // Sequences of strings
-    test_sequence_algorithms();
-    test_stl_containers();
 
     std::printf("All tests passed... Unbelievable!\n");
     return 0;

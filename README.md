@@ -137,7 +137,7 @@ __Who is this for?__
       <span style="color:#ABABAB;">arm:</span> <b>0.02</b> GB/s
     </td>
     <td align="center">
-      <code>sz_find_charset</code><br/>
+      <code>sz_find_byteset</code><br/>
       <span style="color:#ABABAB;">x86:</span> <b>4.08</b> &centerdot;
       <span style="color:#ABABAB;">arm:</span> <b>3.22</b> GB/s
     </td>
@@ -155,7 +155,7 @@ __Who is this for?__
     </td>
     <td align="center">⚪</td>
     <td align="center">
-      <code>sz_rfind_charset</code><br/>
+      <code>sz_rfind_byteset</code><br/>
       <span style="color:#ABABAB;">x86:</span> <b>0.43</b> &centerdot;
       <span style="color:#ABABAB;">arm:</span> <b>0.23</b> GB/s
     </td>
@@ -181,7 +181,7 @@ __Who is this for?__
       <span style="color:#ABABAB;">arm:</span> <b>5.9</b> MB/s
     </td>
     <td align="center">
-      <code>sz_generate</code><br/>
+      <code>sz_fill_random</code><br/>
       <span style="color:#ABABAB;">x86:</span> <b>56.2</b> &centerdot;
       <span style="color:#ABABAB;">arm:</span> <b>25.8</b> MB/s
     </td>
@@ -203,7 +203,7 @@ __Who is this for?__
       <span style="color:#ABABAB;">arm:</span> <b>140.0</b> MB/s
     </td>
     <td align="center">
-      <code>sz_look_up_transform</code><br/>
+      <code>sz_lookup</code><br/>
       <span style="color:#ABABAB;">x86:</span> <b>21.2</b> &centerdot;
       <span style="color:#ABABAB;">arm:</span> <b>8.5</b> GB/s
     </td>
@@ -229,7 +229,7 @@ __Who is this for?__
       <span style="color:#ABABAB;">arm:</span> <b>13.00</b> s
     </td>
     <td align="center">
-      <code>sz_sort</code><br/>
+      <code>sz_sequence_argsort</code><br/>
       <span style="color:#ABABAB;">x86:</span> <b>1.91</b> &centerdot;
       <span style="color:#ABABAB;">arm:</span> <b>2.37</b> s
     </td>
@@ -247,7 +247,7 @@ __Who is this for?__
       <span style="color:#ABABAB;">arm:</span> <b>2,220</b> ns
     </td>
     <td align="center">
-      <code>sz_edit_distance</code><br/>
+      <code>sz_levenshtein_distance</code><br/>
       <span style="color:#ABABAB;">x86:</span> <b>99</b> &centerdot;
       <span style="color:#ABABAB;">arm:</span> <b>180</b> ns
     </td>
@@ -265,7 +265,7 @@ __Who is this for?__
       <span style="color:#ABABAB;">arm:</span> <b>367</b> ms
     </td>
     <td align="center">
-      <code>sz_alignment_score</code><br/>
+      <code>sz_needleman_wunsch_score</code><br/>
       <span style="color:#ABABAB;">x86:</span> <b>73</b> &centerdot;
       <span style="color:#ABABAB;">arm:</span> <b>177</b> ms
     </td>
@@ -396,8 +396,8 @@ x: int = text.find_first_of('chars', start=0, end=sys.maxsize)
 x: int = text.find_last_of('chars', start=0, end=sys.maxsize)
 x: int = text.find_first_not_of('chars', start=0, end=sys.maxsize)
 x: int = text.find_last_not_of('chars', start=0, end=sys.maxsize)
-x: Strs = text.split_charset(separator='chars', maxsplit=sys.maxsize, keepseparator=False)
-x: Strs = text.rsplit_charset(separator='chars', maxsplit=sys.maxsize, keepseparator=False)
+x: Strs = text.split_byteset(separator='chars', maxsplit=sys.maxsize, keepseparator=False)
+x: Strs = text.rsplit_byteset(separator='chars', maxsplit=sys.maxsize, keepseparator=False)
 ```
 
 You can also transform the string using Look-Up Tables (LUTs), mapping it to a different character set.
@@ -429,7 +429,7 @@ lines: Strs = text.split(separator='\n') # 4 bytes per line overhead for under 4
 batch: Strs = lines.sample(seed=42) # 10x faster than `random.choices`
 lines.shuffle(seed=42) # or shuffle all lines in place and shard with slices
 # WIP: lines.sort() # explodes to 16 bytes per line overhead for any length text
-# WIP: sorted_order: tuple = lines.argsort() # similar to `numpy.argsort`
+# WIP: argsort: tuple = lines.argsort() # similar to `numpy.argsort`
 ```
 
 Working on [RedPajama][redpajama], addressing 20 Billion annotated english documents, one will need only 160 GB of RAM instead of Terabytes.
@@ -453,8 +453,8 @@ StringZilla saves a lot of memory by viewing existing memory regions as substrin
 ```py
 x: SplitIterator[Str] = text.split_iter(separator=' ', keepseparator=False)
 x: SplitIterator[Str] = text.rsplit_iter(separator=' ', keepseparator=False)
-x: SplitIterator[Str] = text.split_charset_iter(separator='chars', keepseparator=False)
-x: SplitIterator[Str] = text.rsplit_charset_iter(separator='chars', keepseparator=False)
+x: SplitIterator[Str] = text.split_byteset_iter(separator='chars', keepseparator=False)
+x: SplitIterator[Str] = text.rsplit_byteset_iter(separator='chars', keepseparator=False)
 ```
 
 StringZilla can easily be 10x more memory efficient than native Python classes for tokenization.
@@ -486,9 +486,9 @@ count: int = sz.count("haystack", "needle", start=0, end=sys.maxsize, allowoverl
 ### Edit Distances
 
 ```py
-assert sz.edit_distance("apple", "aple") == 1 # skip one ASCII character
-assert sz.edit_distance("αβγδ", "αγδ") == 2 # skip two bytes forming one rune
-assert sz.edit_distance_unicode("αβγδ", "αγδ") == 1 # one unicode rune
+assert sz.levenshtein_distance("apple", "aple") == 1 # skip one ASCII character
+assert sz.levenshtein_distance("αβγδ", "αγδ") == 2 # skip two bytes forming one rune
+assert sz.levenshtein_distance_unicode("αβγδ", "αγδ") == 1 # one unicode rune
 ```
 
 Several Python libraries provide edit distance computation.
@@ -513,7 +513,7 @@ costs = np.zeros((256, 256), dtype=np.int8)
 costs.fill(-1)
 np.fill_diagonal(costs, 0)
 
-assert sz.alignment_score("first", "second", substitution_matrix=costs, gap_score=-1) == -sz.edit_distance(a, b)
+assert sz.alignment_score("first", "second", substitution_matrix=costs, gap_score=-1) == -sz.levenshtein_distance(a, b)
 ```
 
 Using the same proteins as for Levenshtein distance benchmarks:
@@ -622,17 +622,26 @@ Both are companions of the `sz_find`, first for x86 CPUs with AVX-512 support, a
 sz_string_view_t haystack = {your_text, your_text_length};
 sz_string_view_t needle = {your_subtext, your_subtext_length};
 
-// Perform string-level operations
+// Perform string-level operations auto-picking the backend or dispatching manually
 sz_size_t substring_position = sz_find(haystack.start, haystack.length, needle.start, needle.length);
-sz_size_t substring_position = sz_find_avx512(haystack.start, haystack.length, needle.start, needle.length);
+sz_size_t substring_position = sz_find_skylake(haystack.start, haystack.length, needle.start, needle.length);
+sz_size_t substring_position = sz_find_haswell(haystack.start, haystack.length, needle.start, needle.length);
 sz_size_t substring_position = sz_find_neon(haystack.start, haystack.length, needle.start, needle.length);
 
-// Hash strings
-sz_u64_t hash = sz_hash(haystack.start, haystack.length);
+// Hash strings at once
+sz_u64_t hash = sz_hash(haystack.start, haystack.length, 42);    // 42 is the seed
+sz_u64_t checksum = sz_bytesum(haystack.start, haystack.length); // or accumulate byte values
+
+// Hash strings incrementally with "init", "stream", and "fold":
+sz_hash_state_t state; 
+sz_hash_state_init(&state, 42);
+sz_hash_state_stream(&state, haystack.start, 1);                       // first char
+sz_hash_state_stream(&state, haystack.start + 1, haystack.length - 1); // rest of the string
+sz_u64_t hash = sz_hash_state_fold(&state);
 
 // Perform collection level operations
-sz_sequence_t array = {your_order, your_count, your_get_start, your_get_length, your_handle};
-sz_sort(&array, &your_config);
+sz_sequence_t array = {your_handle, your_count, your_get_start, your_get_length};
+sz_sequence_argsort(&array, &your_config);
 ```
 
 <details>
@@ -645,7 +654,7 @@ By design, StringZilla has a couple of notable differences from LibC:
 
 That way `sz_find` and `sz_rfind` are similar to `strstr` and `strrstr` in LibC.
 Similarly, `sz_find_byte` and `sz_rfind_byte` replace `memchr` and `memrchr`.
-The `sz_find_charset` maps to `strspn` and `strcspn`, while `sz_rfind_charset` has no sibling in LibC.
+The `sz_find_byteset` maps to `strspn` and `strcspn`, while `sz_rfind_byteset` has no sibling in LibC.
 
 <table>
     <tr>
@@ -670,11 +679,11 @@ The `sz_find_charset` maps to `strspn` and `strcspn`, while `sz_rfind_charset` h
     </tr>
     <tr>
         <td><code>strcspn(haystack, needles)</code></td>
-        <td><code>sz_rfind_charset(haystack, haystack_length, needles_bitset)</code></td>
+        <td><code>sz_rfind_byteset(haystack, haystack_length, needles_bitset)</code></td>
     </tr>
     <tr>
         <td><code>strspn(haystack, needles)</code></td>
-        <td><code>sz_find_charset(haystack, haystack_length, needles_bitset)</code></td>
+        <td><code>sz_find_byteset(haystack, haystack_length, needles_bitset)</code></td>
     </tr>
     <tr>
         <td><code>memmem(haystack, haystack_length, needle, needle_length)</code>, <code>strstr</code></td>
@@ -724,12 +733,12 @@ haystack.compare(needle) == 1; // Or `haystack <=> needle` in C++ 20 and beyond
 StringZilla also provides string literals for automatic type resolution, [similar to STL][stl-literal]:
 
 ```cpp
-using sz::literals::operator""_sz;
+using sz::literals::operator""_sv;
 using std::literals::operator""sv;
 
 auto a = "some string"; // char const *
 auto b = "some string"sv; // std::string_view
-auto b = "some string"_sz; // sz::string_view
+auto b = "some string"_sv; // sz::string_view
 ```
 
 [stl-literal]: https://en.cppreference.com/w/cpp/string/basic_string_view/operator%22%22sv
@@ -747,7 +756,7 @@ typedef union sz_string_t {
     struct internal {
         sz_ptr_t start;
         sz_u8_t length;
-        char chars[SZ_STRING_INTERNAL_SPACE]; /// Ends with a null-terminator.
+        char chars[_SZ_STRING_INTERNAL_SPACE]; /// Ends with a null-terminator.
     } internal;
 
     struct external {
@@ -887,7 +896,7 @@ str("a:b").back(-2) == ":b"; // similar to Python's `"a:b"[-2:]`
 str("a:b").sub(1, -1) == ":"; // similar to Python's `"a:b"[1:-1]`
 str("a:b").sub(-2, -1) == ":"; // similar to Python's `"a:b"[-2:-1]`
 str("a:b").sub(-2, 1) == ""; // similar to Python's `"a:b"[-2:1]`
-"a:b"_sz[{-2, -1}] == ":"; // works on views and overloads `operator[]`
+"a:b"_sv[{-2, -1}] == ":"; // works on views and overloads `operator[]`
 ```
 
 Assuming StringZilla is a header-only library you can use the full API in some translation units and gradually transition to safer restricted API in others.
@@ -914,7 +923,7 @@ StringZilla provides a convenient `partition` function, which returns a tuple of
 ```cpp
 auto parts = haystack.partition(':'); // Matching a character
 auto [before, match, after] = haystack.partition(':'); // Structure unpacking
-auto [before, match, after] = haystack.partition(sz::char_set(":;")); // Character-set argument
+auto [before, match, after] = haystack.partition(sz::byteset(":;")); // Character-set argument
 auto [before, match, after] = haystack.partition(" : "); // String argument
 auto [before, match, after] = haystack.rpartition(sz::whitespaces_set()); // Split around the last whitespace
 ```
@@ -942,8 +951,8 @@ Here is a sneak peek of the most useful ones.
 ```cpp
 text.hash(); // -> 64 bit unsigned integer 
 text.ssize(); // -> 64 bit signed length to avoid `static_cast<std::ssize_t>(text.size())`
-text.contains_only(" \w\t"); // == text.find_first_not_of(sz::char_set(" \w\t")) == npos;
-text.contains(sz::whitespaces_set()); // == text.find(sz::char_set(sz::whitespaces_set())) != npos;
+text.contains_only(" \w\t"); // == text.find_first_not_of(sz::byteset(" \w\t")) == npos;
+text.contains(sz::whitespaces_set()); // == text.find(sz::byteset(sz::whitespaces_set())) != npos;
 
 // Simpler slicing than `substr`
 text.front(10); // -> sz::string_view
@@ -988,7 +997,7 @@ To avoid those, StringZilla provides lazily-evaluated ranges, compatible with th
 
 ```cpp
 for (auto line : haystack.split("\r\n"))
-    for (auto word : line.split(sz::char_set(" \w\t.,;:!?")))
+    for (auto word : line.split(sz::byteset(" \w\t.,;:!?")))
         std::cout << word << std::endl;
 ```
 
@@ -997,9 +1006,9 @@ It also allows interleaving matches, if you want both inclusions of `xx` in `xxx
 Debugging pointer offsets is not a pleasant exercise, so keep the following functions in mind.
 
 - `haystack.[r]find_all(needle, interleaving)`
-- `haystack.[r]find_all(sz::char_set(""))`
+- `haystack.[r]find_all(sz::byteset(""))`
 - `haystack.[r]split(needle)`
-- `haystack.[r]split(sz::char_set(""))`
+- `haystack.[r]split(sz::byteset(""))`
 
 For $N$ matches the split functions will report $N+1$ matches, potentially including empty strings.
 Ranges have a few convenience methods as well:
@@ -1056,18 +1065,18 @@ sz::string random_string(std::size_t length, char const *alphabet, std::size_t c
 ```
 
 Mouthful and slow.
-StringZilla provides a C native method - `sz_generate` and a convenient C++ wrapper - `sz::generate`.
+StringZilla provides a C native method - `sz_fill_random` and a convenient C++ wrapper - `sz::generate`.
 Similar to Python it also defines the commonly used character sets.
 
 ```cpp
 auto protein = sz::string::random(300, "ARNDCQEGHILKMFPSTWYV"); // static method
 auto dna = sz::basic_string<custom_allocator>::random(3_000_000_000, "ACGT");
 
-dna.randomize("ACGT"); // `noexcept` pre-allocated version
-dna.randomize(&std::rand, "ACGT"); // pass any generator, like `std::mt19937`
+dna.fill_random("ACGT"); // `noexcept` pre-allocated version
+dna.fill_random(&std::rand, "ACGT"); // pass any generator, like `std::mt19937`
 
 char uuid[36];
-sz::randomize(sz::string_span(uuid, 36), "0123456789abcdef-"); // Overwrite any buffer
+sz::fill_random(sz::string_span(uuid, 36), "0123456789abcdef-"); // Overwrite any buffer
 ```
 
 ### Bulk Replacements
@@ -1076,11 +1085,11 @@ In text processing, it's often necessary to replace all occurrences of a specifi
 Standard library functions may not offer the most efficient or convenient methods for performing bulk replacements, especially when dealing with large strings or performance-critical applications.
 
 - `haystack.replace_all(needle_string, replacement_string)`
-- `haystack.replace_all(sz::char_set(""), replacement_string)`
+- `haystack.replace_all(sz::byteset(""), replacement_string)`
 - `haystack.try_replace_all(needle_string, replacement_string)`
-- `haystack.try_replace_all(sz::char_set(""), replacement_string)`
-- `haystack.transform(sz::look_up_table::identity())`
-- `haystack.transform(sz::look_up_table::identity(), haystack.data())`
+- `haystack.try_replace_all(sz::byteset(""), replacement_string)`
+- `haystack.lookup(sz::look_up_table::identity())`
+- `haystack.lookup(sz::look_up_table::identity(), haystack.data())`
 
 ### Levenshtein Edit Distance and Alignment Scores
 
@@ -1094,8 +1103,8 @@ sz::hamming_distance(first, second[, upper_bound]) -> std::size_t;
 sz::hamming_distance_utf8(first, second[, upper_bound]) -> std::size_t;
 
 // Count number of insertions, deletions and substitutions
-sz::edit_distance(first, second[, upper_bound[, allocator]]) -> std::size_t;
-sz::edit_distance_utf8(first, second[, upper_bound[, allocator]]) -> std::size_t;
+sz::levenshtein_distance(first, second[, upper_bound[, allocator]]) -> std::size_t;
+sz::levenshtein_distance_utf8(first, second[, upper_bound[, allocator]]) -> std::size_t;
 
 // Substitution-parametrized Needleman-Wunsch global alignment score
 std::int8_t costs[256][256]; // Substitution costs matrix
@@ -1128,14 +1137,14 @@ C++ generic algorithm is not perfect either.
 There is no guarantee in the standard that `std::sort` won't allocate any memory.
 If you are running on embedded, in real-time or on 100+ CPU cores per node, you may want to avoid that.
 StringZilla doesn't solve the general case, but hopes to improve the performance for strings.
-Use `sz_sort`, or the high-level `sz::sorted_order`, which can be used sort any collection of elements convertible to `sz::string_view`.
+Use `sz_sequence_argsort`, or the high-level `sz::argsort`, which can be used sort any collection of elements convertible to `sz::string_view`.
 
 ```cpp
 std::vector<std::string> data({"c", "b", "a"});
-std::vector<std::size_t> order = sz::sorted_order(data); //< Simple shortcut
+std::vector<std::size_t> order = sz::argsort(data); //< Simple shortcut
 
 // Or, taking care of memory allocation:
-sz::sorted_order(data.begin(), data.end(), order.data(), [](auto const &x) -> sz::string_view { return x; });
+sz::argsort(data.begin(), data.end(), order.data(), [](auto const &x) -> sz::string_view { return x; });
 ```
 
 ### Standard C++ Containers with String Keys
@@ -1151,8 +1160,8 @@ The performance of those containers is often limited by the performance of the s
 StringZilla can be used to accelerate containers with `std::string` keys, by overriding the default comparator and hash functions.
 
 ```cpp
-std::map<std::string, int, sz::string_view_less> sorted_words;
-std::unordered_map<std::string, int, sz::string_view_hash, sz::string_view_equal_to> words;
+std::map<std::string, int, sz::less> sorted_words;
+std::unordered_map<std::string, int, sz::hash, sz::equal_to> words;
 ```
 
 Alternatively, a better approach would be to use the `sz::string` class as a key.
@@ -1172,7 +1181,7 @@ __`SZ_DEBUG`__:
 > If you want to enable more aggressive bounds-checking, define `SZ_DEBUG` before including the header.
 > If not explicitly set, it will be inferred from the build type.
 
-__`SZ_USE_X86_AVX512`, `SZ_USE_X86_AVX2`, `SZ_USE_ARM_NEON`__:
+__`SZ_USE_HASWELL`, `SZ_USE_SKYLAKE`, `SZ_USE_ICE`, `SZ_USE_NEON`, `SZ_USE_SVE`, `SZ_USE_SVE2`__:
 
 > One can explicitly disable certain families of SIMD instructions for compatibility purposes.
 > Default values are inferred at compile time.
@@ -1241,8 +1250,8 @@ sz::find("Hello, world!", "world") // 7
 sz::rfind("Hello, world!", "world") // 7
 
 // Generalizations of `memchr::memrchr[123]`
-sz::find_char_from("Hello, world!", "world") // 2
-sz::rfind_char_from("Hello, world!", "world") // 11
+sz::find_byte_from("Hello, world!", "world") // 2
+sz::rfind_byte_from("Hello, world!", "world") // 11
 ```
 
 Unlike `memchr`, the throughput of `stringzilla` is [high in both normal and reverse-order searches][memchr-benchmarks].
@@ -1259,29 +1268,29 @@ let my_cow_str = Cow::from(&my_string);
 // Use the generic function with a String
 assert_eq!(my_string.sz_find("world"), Some(7));
 assert_eq!(my_string.sz_rfind("world"), Some(7));
-assert_eq!(my_string.sz_find_char_from("world"), Some(2));
-assert_eq!(my_string.sz_rfind_char_from("world"), Some(11));
-assert_eq!(my_string.sz_find_char_not_from("world"), Some(0));
-assert_eq!(my_string.sz_rfind_char_not_from("world"), Some(12));
+assert_eq!(my_string.sz_find_byte_from("world"), Some(2));
+assert_eq!(my_string.sz_rfind_byte_from("world"), Some(11));
+assert_eq!(my_string.sz_find_byte_not_from("world"), Some(0));
+assert_eq!(my_string.sz_rfind_byte_not_from("world"), Some(12));
 
 // Same works for &str and Cow<'_, str>
 assert_eq!(my_str.sz_find("world"), Some(7));
 assert_eq!(my_cow_str.as_ref().sz_find("world"), Some(7));
 ```
 
-The library also exposes Levenshtein and Hamming edit-distances for byte-arrays and UTF-8 strings, as well as Needleman-Wunch alignment scores.
+The library also exposes Levenshtein and Hamming edit-distances for byte-arrays and UTF-8 strings, as well as Needleman-Wunsch alignment scores.
 
 ```rust
 use stringzilla::sz;
 
 // Handling arbitrary byte arrays:
-sz::edit_distance("Hello, world!", "Hello, world?"); // 1
+sz::levenshtein_distance("Hello, world!", "Hello, world?"); // 1
 sz::hamming_distance("Hello, world!", "Hello, world?"); // 1
 sz::alignment_score("Hello, world!", "Hello, world?", sz::unary_substitution_costs(), -1); // -1
 
 // Handling UTF-8 strings:
 sz::hamming_distance_utf8("αβγδ", "αγγδ") // 1
-sz::edit_distance_utf8("façade", "facade") // 1
+sz::levenshtein_distance_utf8("façade", "facade") // 1
 ```
 
 [memchr-benchmarks]: https://github.com/ashvardanian/memchr_vs_stringzilla
@@ -1306,7 +1315,7 @@ s[s.findLast(substring: "o")!...] // "o StringZilla. 👋")
 s[s.findFirst(characterFrom: "aeiou")!...] // "ello, world! Welcome to StringZilla. 👋")
 s[s.findLast(characterFrom: "aeiou")!...] // "a. 👋")
 s[s.findFirst(characterNotFrom: "aeiou")!...] // "Hello, world! Welcome to StringZilla. 👋"
-s.editDistance(from: "Hello, world!")! // 29
+s.levenshteinDistance(from: "Hello, world!")! // 29
 ```
 
 ## Algorithms & Design Decisions 📚
@@ -1369,6 +1378,20 @@ Other algorithms previously considered and deprecated:
 > [Exact String Matching Algorithms in Java](https://www-igm.univ-mlv.fr/~lecroq/string).
 > [SIMD-friendly algorithms for substring searching](http://0x80.pl/articles/simd-strfind.html).
 
+### Exact Multiple Substring Search
+
+Few algorithms for multiple substring search are known.
+Most are based on the Aho-Corasick automaton, which is a generalization of the KMP algorithm.
+The naive implementation, however:
+
+- Allocates disjoint memory for each Trie node and Automaton state.
+- Requires a lot of pointer chasing, limiting speculative execution.
+- Has a lot of branches and conditional moves, which are hard to predict.
+- Matches text a character at a time, which is slow on modern CPUs.
+
+There are several ways to improve the original algorithm.
+One is to use sparse DFA representation, which is more cache-friendly, but would require extra processing to navigate state transitions.
+
 ### Levenshtein Edit Distance
 
 Levenshtein distance is the best known edit-distance for strings, that checks, how many insertions, deletions, and substitutions are needed to transform one string to another.
@@ -1390,10 +1413,11 @@ It's less known, than the others, derived from the Baeza-Yates-Gonnet algorithm,
 StringZilla introduces a different approach, extensively used in Unum's internal combinatorial optimization libraries.
 The approach doesn't change the number of trivial operations, but performs them in a different order, removing the data dependency, that occurs when computing the insertion costs.
 This results in much better vectorization for intra-core parallelism and potentially multi-core evaluation of a single request.
+Moreover, it's easy to generalize to weighted edit-distances, where the cost of a substitution between two characters may not be the same for all pairs, often used in bioinformatics.
 
 Next design goals:
 
-- [ ] Generalize fast traversals to rectangular matrices.
+- [x] Generalize fast traversals to non-square matrices.
 - [ ] Port x86 AVX-512 solution to Arm NEON.
 
 > § Reading materials.
@@ -1427,6 +1451,10 @@ With that solved, the SIMD implementation will become 5x faster than the serial 
 [faq-dipeptide]: https://en.wikipedia.org/wiki/Dipeptide
 [faq-titin]: https://en.wikipedia.org/wiki/Titin
 
+Next design goals:
+
+- [ ] Needleman-Wunsch Automata
+
 ### Memory Copying, Fills, and Moves
 
 A lot has been written about the time computers spend copying memory and how that operation is implemented in LibC.
@@ -1437,7 +1465,7 @@ In AVX-512, StringZilla uses non-temporal stores to avoid cache pollution, when 
 Moreover, it handles the unaligned head and the tails of the `target` buffer separately, ensuring that writes in big copies are always aligned to cache-line boundaries.
 That's true for both AVX2 and AVX-512 backends.
 
-StringZilla also contains "drafts" of smarter, but less efficient algorithms, that minimize the number of unaligned loads, perfoming shuffles and permutations.
+StringZilla also contains "drafts" of smarter, but less efficient algorithms, that minimize the number of unaligned loads, performing shuffles and permutations.
 That's a topic for future research, as the performance gains are not yet satisfactory.
 
 > § Reading materials.
@@ -1533,7 +1561,7 @@ Most StringZilla operations are byte-level, so they work well with ASCII and UTF
 In some cases, like edit-distance computation, the result of byte-level evaluation and character-level evaluation may differ.
 So StringZilla provides following functions to work with Unicode:
 
-- `sz_edit_distance_utf8` - computes the Levenshtein distance between two UTF-8 strings.
+- `sz_levenshtein_distance_utf8` - computes the Levenshtein distance between two UTF-8 strings.
 - `sz_hamming_distance_utf8` - computes the Hamming distance between two UTF-8 strings.
 
 Java, JavaScript, Python 2, C#, and Objective-C, however, use wide characters (`wchar`) - two byte long codes, instead of the more reasonable fixed-length UTF32 or variable-length UTF8.
