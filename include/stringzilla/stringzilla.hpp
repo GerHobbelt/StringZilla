@@ -1070,7 +1070,7 @@ template <typename allocator_type_, typename allocator_callback_>
 static bool _with_alloc(allocator_type_ &allocator, allocator_callback_ &&callback) noexcept {
     sz_memory_allocator_t alloc;
     alloc.allocate = &_call_allocate<allocator_type_>;
-    alloc.free = &_call_free<allocator_type_>;
+    alloc.release = &_call_free<allocator_type_>;
     alloc.handle = &allocator;
     return callback(alloc);
 }
@@ -1397,13 +1397,20 @@ class basic_string_slice {
      *  @brief  Removes the first `n` characters from the view.
      *  @warning The behavior is @b undefined if `n > size()`.
      */
-    void remove_prefix(size_type n) noexcept { assert(n <= size()), start_ += n, length_ -= n; }
+    void remove_prefix(size_type n) noexcept {
+        assert(n <= size());
+        start_ += n;
+        length_ -= n;
+    }
 
     /**
      *  @brief  Removes the last `n` characters from the view.
      *  @warning The behavior is @b undefined if `n > size()`.
      */
-    void remove_suffix(size_type n) noexcept { assert(n <= size()), length_ -= n; }
+    void remove_suffix(size_type n) noexcept {
+        assert(n <= size());
+        length_ -= n;
+    }
 
     /**  @brief  Added for STL compatibility. */
     string_slice substr() const noexcept { return *this; }

@@ -30,7 +30,7 @@ tracked_binary_functions_t distance_functions() {
     // Two rows of the Levenshtein matrix will occupy this much:
     sz_memory_allocator_t alloc;
     alloc.allocate = &allocate_from_vector;
-    alloc.free = &free_from_vector;
+    alloc.release = &free_from_vector;
     alloc.handle = &temporary_memory;
 
     auto wrap_baseline = binary_function_t([](std::string_view a, std::string_view b) -> std::size_t {

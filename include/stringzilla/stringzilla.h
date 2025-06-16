@@ -330,7 +330,7 @@ typedef sz_u64_t (*sz_random_generator_t)(void *);
  */
 typedef struct sz_memory_allocator_t {
     sz_memory_allocate_t allocate;
-    sz_memory_free_t free;
+    sz_memory_free_t release;
     void *handle;
 } sz_memory_allocator_t;
 
@@ -1834,10 +1834,10 @@ SZ_PUBLIC void _sz_memory_free_default(sz_ptr_t start, sz_size_t length, void *h
 SZ_PUBLIC void sz_memory_allocator_init_default(sz_memory_allocator_t *alloc) {
 #if !SZ_AVOID_LIBC
     alloc->allocate = (sz_memory_allocate_t)_sz_memory_allocate_default;
-    alloc->free = (sz_memory_free_t)_sz_memory_free_default;
+    alloc->release = (sz_memory_free_t)_sz_memory_free_default;
 #else
     alloc->allocate = (sz_memory_allocate_t)SZ_NULL;
-    alloc->free = (sz_memory_free_t)SZ_NULL;
+    alloc->release = (sz_memory_free_t)SZ_NULL;
 #endif
     alloc->handle = SZ_NULL;
 }
@@ -1846,7 +1846,7 @@ SZ_PUBLIC void sz_memory_allocator_init_fixed(sz_memory_allocator_t *alloc, void
     // The logic here is simple - put the buffer length in the first slots of the buffer.
     // Later use it for bounds checking.
     alloc->allocate = (sz_memory_allocate_t)_sz_memory_allocate_fixed;
-    alloc->free = (sz_memory_free_t)_sz_memory_free_fixed;
+    alloc->release = (sz_memory_free_t)_sz_memory_free_fixed;
     alloc->handle = &buffer;
     sz_copy((sz_ptr_t)buffer, (sz_cptr_t)&length, sizeof(sz_size_t));
 }
@@ -2508,7 +2508,7 @@ SZ_INTERNAL sz_size_t _sz_edit_distance_skewed_diagonals_serial( //
 
     // Cache scalar before `free` call.
     sz_size_t result = current_distances[0];
-    alloc->free(distances, buffer_length, alloc->handle);
+    alloc->release(distances, buffer_length, alloc->handle);
     return result;
 }
 
@@ -2677,7 +2677,7 @@ SZ_INTERNAL sz_size_t _sz_edit_distance_wagner_fisher_serial( //
     }                                                                                                                 \
     /* Cache scalar before `free` call. */                                                                            \
     sz_size_t result = previous_distances[shorter_length];                                                            \
-    alloc->free(buffer, buffer_length, alloc->handle);                                                                \
+    alloc->release(buffer, buffer_length, alloc->handle);                                                                \
     return result;
 
     // Let's define a separate variant for bounded distance computation.
@@ -2707,7 +2707,7 @@ SZ_INTERNAL sz_size_t _sz_edit_distance_wagner_fisher_serial( //
         }                                                                                                             \
         /* If the minimum distance in this row exceeded the bound, return early */                                    \
         if (min_distance >= bound) {                                                                                  \
-            alloc->free(buffer, buffer_length, alloc->handle);                                                        \
+            alloc->release(buffer, buffer_length, alloc->handle);                                                        \
             return bound;                                                                                             \
         }                                                                                                             \
         _distance_t *temporary = previous_distances;                                                                  \
@@ -2715,7 +2715,7 @@ SZ_INTERNAL sz_size_t _sz_edit_distance_wagner_fisher_serial( //
         current_distances = temporary;                                                                                \
     }                                                                                                                 \
     sz_size_t result = previous_distances[shorter_length];                                                            \
-    alloc->free(buffer, buffer_length, alloc->handle);                                                                \
+    alloc->release(buffer, buffer_length, alloc->handle);                                                                \
     return sz_min_of_two(result, bound);
 
     // Dispatch the actual computation.
@@ -2817,7 +2817,7 @@ SZ_PUBLIC sz_ssize_t sz_alignment_score_serial(       //
 
     // Cache scalar before `free` call.
     sz_ssize_t result = previous_distances[shorter_length];
-    alloc->free(distances, buffer_length, alloc->handle);
+    alloc->release(distances, buffer_length, alloc->handle);
     return result;
 }
 
@@ -3386,7 +3386,7 @@ SZ_PUBLIC sz_ptr_t sz_string_reserve(sz_string_t *string, sz_size_t new_capacity
     string->external.length = string_length;
 
     // Deallocate the old string.
-    if (string_is_external) allocator->free(string_start, string_space, allocator->handle);
+    if (string_is_external) allocator->release(string_start, string_space, allocator->handle);
     return string->external.start;
 }
 
@@ -3414,7 +3414,7 @@ SZ_PUBLIC sz_ptr_t sz_string_shrink_to_fit(sz_string_t *string, sz_memory_alloca
     string->external.length = string_length;
 
     // Deallocate the old string.
-    if (string_is_external) allocator->free(string_start, string_space, allocator->handle);
+    if (string_is_external) allocator->release(string_start, string_space, allocator->handle);
     return string->external.start;
 }
 
@@ -3494,7 +3494,7 @@ SZ_PUBLIC sz_size_t sz_string_erase(sz_string_t *string, sz_size_t offset, sz_si
 
 SZ_PUBLIC void sz_string_free(sz_string_t *string, sz_memory_allocator_t *allocator) {
     if (!sz_string_is_on_stack(string))
-        allocator->free(string->external.start, string->external.space, allocator->handle);
+        allocator->release(string->external.start, string->external.space, allocator->handle);
     sz_string_init(string);
 }
 
@@ -5285,7 +5285,7 @@ SZ_INTERNAL sz_size_t _sz_edit_distance_skewed_diagonals_upto65k_avx512( //
 
     // Cache scalar before `free` call.
     sz_size_t result = current_distances[0];
-    alloc->free(distances, buffer_length, alloc->handle);
+    alloc->release(distances, buffer_length, alloc->handle);
     return result;
 }
 
@@ -5982,7 +5982,7 @@ SZ_INTERNAL sz_ssize_t _sz_alignment_score_wagner_fisher_upto17m_avx512( //
 
     // Cache scalar before `free` call.
     sz_ssize_t result = previous_distances[longer_length];
-    alloc->free(distances, buffer_length, alloc->handle);
+    alloc->release(distances, buffer_length, alloc->handle);
     return result;
 }
 
