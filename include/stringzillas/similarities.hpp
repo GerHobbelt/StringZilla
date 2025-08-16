@@ -70,7 +70,7 @@
 #define STRINGZILLAS_SIMILARITIES_HPP_
 
 #include "stringzilla/types.hpp"  // `sz::error_cost_t`
-#include "stringzilla/memory.h"   // `sz_move`
+#include "stringzilla/memory.h"   // `sz_move_serial`
 #include "stringzillas/types.hpp" // `sz::executor_like`
 
 #include <atomic>      // `std::atomic` to synchronize OpenMP threads
@@ -147,7 +147,7 @@ struct uniform_substitution_costs_t {
  *          so smaller variants should be preferred where possible.
  */
 struct error_costs_256x256_t {
-    error_cost_t cells[256][256] = {0};
+    error_cost_t cells[256][256] = {{0}};
 
     constexpr error_cost_t operator()(char a, char b) const noexcept { return cells[(sz_u8_t)a][(sz_u8_t)b]; }
     constexpr error_cost_t operator()(sz_u8_t a, sz_u8_t b) const noexcept { return cells[a][b]; }
@@ -1078,8 +1078,8 @@ struct diagonal_walker<char_type_, score_type_, substituter_type_, linear_gap_co
             rotate_three(previous_scores, current_scores, next_scores);
 
             // ! Drop the first entry among the current scores.
-            sz_move((sz_ptr_t)(previous_scores), (sz_ptr_t)(previous_scores + 1),
-                    (max_diagonal_length - 1) * sizeof(score_t));
+            sz_move_serial((sz_ptr_t)(previous_scores), (sz_ptr_t)(previous_scores + 1),
+                           (max_diagonal_length - 1) * sizeof(score_t));
         }
 
         // Now let's handle the bottom-right triangle of the matrix.
@@ -1101,7 +1101,7 @@ struct diagonal_walker<char_type_, score_type_, substituter_type_, linear_gap_co
 
             // ! Drop the first entry among the current scores.
             // ! Assuming every next diagonal is shorter by one element,
-            // ! we don't need a full-blown `sz_move` to shift the array by one element.
+            // ! we don't need a full-blown `sz_move_serial` to shift the array by one element.
             previous_scores++;
         }
 
@@ -1295,8 +1295,8 @@ struct diagonal_walker<char_type_, score_type_, substituter_type_, affine_gap_co
             trivial_swap(current_deletes, next_deletes);
 
             // ! Drop the first entry among the current scores.
-            sz_move((sz_ptr_t)(previous_scores), (sz_ptr_t)(previous_scores + 1),
-                    (max_diagonal_length - 1) * sizeof(score_t));
+            sz_move_serial((sz_ptr_t)(previous_scores), (sz_ptr_t)(previous_scores + 1),
+                           (max_diagonal_length - 1) * sizeof(score_t));
         }
 
         // Now let's handle the bottom-right triangle of the matrix.
@@ -1323,7 +1323,7 @@ struct diagonal_walker<char_type_, score_type_, substituter_type_, affine_gap_co
 
             // ! Drop the first entry among the current scores.
             // ! Assuming every next diagonal is shorter by one element,
-            // ! we don't need a full-blown `sz_move` to shift the array by one element.
+            // ! we don't need a full-blown `sz_move_serial` to shift the array by one element.
             previous_scores++;
         }
 
@@ -2094,7 +2094,7 @@ template <                                     //
     typename executor_type_ = dummy_executor_t //
     >
 #if SZ_IS_CPP20_
-    requires score_like<score_type_> && executor_like<executor_type_>
+    requires score_like<score_type_> && executor_like<executor_type_> && indexed_results_like<results_type_>
 #endif
 status_t _score_in_parallel(                                                                                       //
     scoring_type_ &&scoring, first_strings_type_ const &first_strings, second_strings_type_ const &second_strings, //
@@ -2160,7 +2160,7 @@ template <                         //
     typename results_type_         //
     >
 #if SZ_IS_CPP20_
-    requires score_like<score_type_>
+    requires score_like<score_type_> && indexed_results_like<results_type_>
 #endif
 status_t _score_sequentially(                                                                                      //
     scoring_type_ &&scoring, first_strings_type_ const &first_strings, second_strings_type_ const &second_strings, //
@@ -2222,7 +2222,7 @@ struct levenshtein_distances {
     template <typename first_strings_type_, typename second_strings_type_, typename results_type_,
               typename executor_type_>
 #if SZ_IS_CPP20_
-        requires executor_like<executor_type_>
+        requires executor_like<executor_type_> && indexed_results_like<results_type_>
 #endif
     status_t operator()(first_strings_type_ const &first_strings, second_strings_type_ const &second_strings,
                         results_type_ &&results, executor_type_ &&executor,
@@ -2273,7 +2273,7 @@ struct levenshtein_distances_utf8 {
     template <typename first_strings_type_, typename second_strings_type_, typename results_type_,
               typename executor_type_>
 #if SZ_IS_CPP20_
-        requires executor_like<executor_type_>
+        requires executor_like<executor_type_> && indexed_results_like<results_type_>
 #endif
     status_t operator()(first_strings_type_ const &first_strings, second_strings_type_ const &second_strings,
                         results_type_ &&results, executor_type_ &&executor,
@@ -2325,7 +2325,7 @@ struct needleman_wunsch_scores {
     template <typename first_strings_type_, typename second_strings_type_, typename results_type_,
               typename executor_type_>
 #if SZ_IS_CPP20_
-        requires executor_like<executor_type_>
+        requires executor_like<executor_type_> && indexed_results_like<results_type_>
 #endif
     status_t operator()(first_strings_type_ const &first_strings, second_strings_type_ const &second_strings,
                         results_type_ &&results, executor_type_ &&executor,
@@ -2377,7 +2377,7 @@ struct smith_waterman_scores {
     template <typename first_strings_type_, typename second_strings_type_, typename results_type_,
               typename executor_type_>
 #if SZ_IS_CPP20_
-        requires executor_like<executor_type_>
+        requires executor_like<executor_type_> && indexed_results_like<results_type_>
 #endif
     status_t operator()(first_strings_type_ const &first_strings, second_strings_type_ const &second_strings,
                         results_type_ &&results, executor_type_ &&executor,
@@ -2457,7 +2457,7 @@ struct smith_waterman_scores {
  *  @endcode
  */
 struct error_costs_26x26ascii_t {
-    error_cost_t cells[26][26] = {0};
+    error_cost_t cells[26][26] = {{0}};
 
     constexpr error_cost_t operator()(char a, char b) const noexcept { return cells[(sz_u8_t)a - 65][(sz_u8_t)b - 65]; }
     constexpr error_cost_t operator()(sz_u8_t a, sz_u8_t b) const noexcept { return cells[a - 65][b - 65]; }

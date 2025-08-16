@@ -371,12 +371,12 @@ struct indexed_container_iterator {
         return *this;
     }
 
-    constexpr indexed_container_iterator operator+(difference_type n) const noexcept {
+    sz_constexpr_if_cpp14 indexed_container_iterator operator+(difference_type n) const noexcept {
         indexed_container_iterator temp = *this;
         return temp += n;
     }
 
-    constexpr indexed_container_iterator operator-(difference_type n) const noexcept {
+    sz_constexpr_if_cpp14 indexed_container_iterator operator-(difference_type n) const noexcept {
         indexed_container_iterator temp = *this;
         return temp -= n;
     }
@@ -470,9 +470,9 @@ struct arrow_strings_tape {
     using iterator_t = indexed_container_iterator<self_t>;
     using iterator = iterator_t; // ? For STL compatibility
 
-#if _SZ_IS_CPP17_ && (!defined(_MSC_VER) || (_MSC_VER > 1944))
-    using char_alloc_t = typename std::allocator_traits<allocator_t>::rebind_alloc<char_t>;
-    using offset_alloc_t = typename std::allocator_traits<allocator_t>::rebind_alloc<offset_t>;
+#if SZ_IS_CPP17_
+    using char_alloc_t = typename std::allocator_traits<allocator_t>::template rebind_alloc<char_t>;
+    using offset_alloc_t = typename std::allocator_traits<allocator_t>::template rebind_alloc<offset_t>;
 #else
     using char_alloc_t = typename allocator_t::template rebind<char_t>::other;
     using offset_alloc_t = typename allocator_t::template rebind<offset_t>::other;
@@ -487,11 +487,11 @@ struct arrow_strings_tape {
 
   public:
     constexpr arrow_strings_tape() = default;
-    constexpr arrow_strings_tape(arrow_strings_tape const &) = delete;
-    constexpr arrow_strings_tape &operator=(arrow_strings_tape const &other) = delete;
 
-    constexpr arrow_strings_tape(arrow_strings_tape &&) = delete;
-    constexpr arrow_strings_tape &operator=(arrow_strings_tape &&) = delete;
+    arrow_strings_tape(arrow_strings_tape &&) = delete;
+    arrow_strings_tape(arrow_strings_tape const &) = delete;
+    arrow_strings_tape &operator=(arrow_strings_tape &&) = delete;
+    arrow_strings_tape &operator=(arrow_strings_tape const &) = delete;
 
     constexpr arrow_strings_tape(span<char_t> buffer, span<offset_t> offsets, allocator_t alloc)
         : buffer_(buffer), offsets_(offsets), char_alloc_(alloc), offset_alloc_(alloc) {}
@@ -634,18 +634,18 @@ struct constant_iterator {
         return *this;
     }
     sz_constexpr_if_cpp14 constant_iterator operator++(int) {
-        constexpr constant_iterator tmp(*this);
+        constant_iterator temp(*this);
         ++pos_;
-        return tmp;
+        return temp;
     }
     sz_constexpr_if_cpp14 constant_iterator &operator--() {
         --pos_;
         return *this;
     }
     sz_constexpr_if_cpp14 constant_iterator operator--(int) {
-        constexpr constant_iterator tmp(*this);
+        constant_iterator temp(*this);
         --pos_;
-        return tmp;
+        return temp;
     }
     sz_constexpr_if_cpp14 constant_iterator &operator+=(difference_type n) {
         pos_ += n;
@@ -830,6 +830,9 @@ struct head_body_tail_t {
     size_t head = 0;
     size_t body = 0;
     size_t tail = 0;
+
+    constexpr head_body_tail_t() = default;
+    constexpr head_body_tail_t(size_t h, size_t b, size_t t) : head(h), body(b), tail(t) {}
 };
 
 template <size_t elements_per_page_, typename element_type_>
