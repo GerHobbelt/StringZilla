@@ -43,6 +43,7 @@
 #include <regex>      // `std::regex`, `std::regex_search`
 #include <thread>     // `std::this_thread::sleep_for`
 #include <optional>   // `std::optional`
+#include <numeric>    // `std::accumulate`
 
 #include <string_view> // Requires C++17
 #include <span>        // Requires C++20, used to pass info to batch-capable parallel backends
@@ -55,6 +56,17 @@
 #endif
 
 #include "test_stringzilla.hpp" // `read_file`
+
+// Make __rdtsc available. Works on x86 GCC, Clang, MSVC.
+// Other platforms might need different treatment.
+#ifdef _MSC_VER
+#include <intrin.h>
+#pragma intrinsic(__rdtsc)
+#define _SZ_HAS_RDTSC 1
+#elif defined(__i386__) or defined(__x86_64__)
+#include <x86intrin.h>
+#define _SZ_HAS_RDTSC 1
+#endif
 
 namespace sz = ashvardanian::stringzilla;
 namespace stdc = std::chrono;
@@ -98,12 +110,14 @@ using profiled_function_t = std::function<call_result_t(std::size_t)>;
  *          Used as a more efficient alternative to `std::chrono::high_resolution_clock`.
  */
 inline std::uint64_t cpu_cycle_counter() {
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(_SZ_HAS_RDTSC)
+    return __rdtsc();
+#elif defined(__i386__) || defined(__x86_64__)
     // Use x86 inline assembly for `rdtsc` only if actually compiling for x86.
     unsigned int lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return (static_cast<std::uint64_t>(hi) << 32) | lo;
-#elif defined(__aarch64__) || defined(_SZ_IS_ARM64)
+#elif defined(__aarch64__) || _SZ_IS_ARM64
     // On ARM64, read the virtual count register `CNTVCT_EL0` which provides cycle count.
     std::uint64_t cnt;
     asm volatile("mrs %0, cntvct_el0" : "=r"(cnt));
