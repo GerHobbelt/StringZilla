@@ -375,7 +375,7 @@ struct arrow_strings_tape {
     using iterator_t = indexed_container_iterator<self_t>;
     using iterator = iterator_t; // ? For STL compatibility
 
-#if _SZ_IS_CPP17
+#if _SZ_IS_CPP17 && (!defined(_MSC_VER) || (_MSC_VER > 1944))
     using char_alloc_t = typename std::allocator_traits<allocator_t>::rebind_alloc<char_t>;
     using offset_alloc_t = typename std::allocator_traits<allocator_t>::rebind_alloc<offset_t>;
 #else
