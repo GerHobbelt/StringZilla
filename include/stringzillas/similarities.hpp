@@ -77,6 +77,7 @@
 #include <type_traits> // `std::enable_if_t` for meta-programming
 #include <limits>      // `std::numeric_limits` for numeric types
 #include <iterator>    // `std::iterator_traits` for iterators
+#include <memory>      // `std::allocator`
 
 namespace ashvardanian {
 namespace stringzillas {
@@ -1754,7 +1755,7 @@ struct levenshtein_distance_utf8 {
     using char_t = char_type_;
     using gap_costs_t = gap_costs_type_;
     using allocator_t = allocator_type_;
-    using allocator_traits_t = allocator_traits<allocator_t>;
+    using allocator_traits_t = std::allocator_traits<allocator_t>;
     using rune_allocator_t = typename allocator_traits_t::template rebind<sz_rune_t>::other;
 
     static constexpr sz_capability_t capability_k = capability_;
@@ -3760,7 +3761,7 @@ struct levenshtein_distance_utf8<char, linear_gap_costs_t, allocator_type_, capa
     using char_t = char;
     using gap_costs_t = linear_gap_costs_t;
     using allocator_t = allocator_type_;
-    using allocator_traits_t = allocator_traits<allocator_t>;
+    using allocator_traits_t = std::allocator_traits<allocator_t>;
     using rune_allocator_t = typename allocator_traits_t::template rebind<sz_rune_t>::other;
 
     static constexpr sz_capability_t capability_k = capability_;
