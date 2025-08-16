@@ -36,6 +36,7 @@ overloaded(callable_types_...) -> overloaded<callable_types_...>;
 
 /** Wraps a `sz_sequence_t` to feel like `std::vector<std::string_view>>` in the implementation layer. */
 struct sz_sequence_as_cpp_container_t {
+    using value_type = std::string_view;
     sz_sequence_t const *sequence_ = nullptr;
 
     std::size_t size() const noexcept {
@@ -45,12 +46,15 @@ struct sz_sequence_as_cpp_container_t {
     std::string_view operator[](std::size_t index) const noexcept {
         sz_assert_(sequence_ != nullptr && "Sequence must not be null");
         sz_assert_(index < sequence_->count && "Index out of bounds");
-        return {sequence_->get_start(sequence_->handle, index), sequence_->get_length(sequence_->handle, index)};
+        sz_cptr_t start_ptr = sequence_->get_start(sequence_->handle, index);
+        sz_size_t length = sequence_->get_length(sequence_->handle, index);
+        return {start_ptr, length};
     }
 };
 
 /** Wraps a `sz_sequence_u64tape_t` to feel like `std::vector<std::string_view>>` in the implementation layer. */
 struct sz_sequence_u64tape_as_cpp_container_t {
+    using value_type = std::string_view;
     sz_sequence_u64tape_t const *tape_ = nullptr;
 
     std::size_t size() const noexcept {
@@ -66,6 +70,7 @@ struct sz_sequence_u64tape_as_cpp_container_t {
 
 /** Wraps a `sz_sequence_u32tape_t` to feel like `std::vector<std::string_view>>` in the implementation layer. */
 struct sz_sequence_u32tape_as_cpp_container_t {
+    using value_type = std::string_view;
     sz_sequence_u32tape_t const *tape_ = nullptr;
 
     std::size_t size() const noexcept {
@@ -80,11 +85,13 @@ struct sz_sequence_u32tape_as_cpp_container_t {
 };
 
 /** Convenience class for slicing a strided fingerprints output. */
-template <typename element_type_>
+template <typename element_type_, sz_size_t row_extent_ = SZ_SIZE_MAX>
 struct strided_rows {
     using value_type = element_type_;
 
   private:
+    static constexpr sz_size_t extent_k = row_extent_; // Extent of each row, default to SZ_SIZE_MAX
+
     sz_ptr_t data_ = nullptr;
     sz_size_t stride_bytes_ = 0;
     sz_size_t row_length_ = 0;
@@ -96,9 +103,15 @@ struct strided_rows {
 
     std::size_t size() const noexcept { return count_; }
 
-    sz::span<value_type> operator[](std::size_t index) const noexcept {
+    template <sz_size_t new_extent_ = extent_k>
+    strided_rows<element_type_, new_extent_> shifted(std::ptrdiff_t offset) const noexcept {
+        return strided_rows<element_type_, new_extent_>(data_ + offset, row_length_, stride_bytes_, count_);
+    }
+
+    sz::span<value_type, extent_k> operator[](std::size_t index) const noexcept {
         sz_assert_(index < count_ && "Index out of bounds");
-        return sz::span<value_type>(reinterpret_cast<value_type *>(data_ + index * stride_bytes_), row_length_);
+        return sz::span<value_type, extent_k>(reinterpret_cast<value_type *>(data_ + index * stride_bytes_),
+                                              row_length_);
     }
 };
 
@@ -242,7 +255,7 @@ struct levenshtein_backends_t {
 template <typename texts_type_>
 sz_status_t sz_levenshtein_distances_for_(                                     //
     sz_levenshtein_distances_t engine_punned, sz_device_scope_t device_punned, //
-    texts_type_ &&a_container, texts_type_ &&b_container,                      //
+    texts_type_ const &a_container, texts_type_ const &b_container,            //
     sz_size_t *results, sz_size_t results_stride) {
 
     sz_assert_(engine_punned != nullptr && "Engine must be initialized");
@@ -309,7 +322,7 @@ struct levenshtein_utf8_backends_t {
      */
     std::variant<
 #if SZ_USE_ICE
-        szs::levenshtein_utf8_ice_t, szs::affine_levenshtein_utf8_ice_t,
+        szs::levenshtein_utf8_ice_t, // ! `szs::affine_levenshtein_utf8_ice_t` won't compile yet
 #endif
         szs::levenshtein_utf8_serial_t, szs::affine_levenshtein_utf8_serial_t>
         variants;
@@ -322,7 +335,7 @@ struct levenshtein_utf8_backends_t {
 template <typename texts_type_>
 sz_status_t sz_levenshtein_distances_utf8_for_(                                     //
     sz_levenshtein_distances_utf8_t engine_punned, sz_device_scope_t device_punned, //
-    texts_type_ &&a_container, texts_type_ &&b_container,                           //
+    texts_type_ const &a_container, texts_type_ const &b_container,                 //
     sz_size_t *results, sz_size_t results_stride) {
 
     sz_assert_(engine_punned != nullptr && "Engine must be initialized");
@@ -370,7 +383,7 @@ sz_status_t sz_levenshtein_distances_utf8_for_(                                 
     return result;
 }
 
-struct needleman_wunsch_scores_backends_t {
+struct needleman_wunsch_backends_t {
 
     /**
      *  On each hardware platform we use a different backend for Levenshtein distances,
@@ -392,14 +405,14 @@ struct needleman_wunsch_scores_backends_t {
         variants;
 
     template <typename... variants_arguments_>
-    needleman_wunsch_scores_backends_t(variants_arguments_ &&...args) noexcept
+    needleman_wunsch_backends_t(variants_arguments_ &&...args) noexcept
         : variants(std::forward<variants_arguments_>(args)...) {}
 };
 
 template <typename texts_type_>
 sz_status_t sz_needleman_wunsch_scores_for_(                                     //
     sz_needleman_wunsch_scores_t engine_punned, sz_device_scope_t device_punned, //
-    texts_type_ &&a_container, texts_type_ &&b_container,                        //
+    texts_type_ const &a_container, texts_type_ const &b_container,              //
     sz_ssize_t *results, sz_size_t results_stride) {
 
     sz_assert_(engine_punned != nullptr && "Engine must be initialized");
@@ -407,7 +420,94 @@ sz_status_t sz_needleman_wunsch_scores_for_(                                    
     sz_assert_(results != nullptr && "Results must not be null");
 
     // Revert back from opaque pointer types
-    auto *engine = reinterpret_cast<needleman_wunsch_scores_backends_t *>(engine_punned);
+    auto *engine = reinterpret_cast<needleman_wunsch_backends_t *>(engine_punned);
+    auto *device = reinterpret_cast<device_scope_t *>(device_punned);
+
+    // Wrap our stable ABI sequences into C++ friendly containers
+    auto results_strided = strided_ptr<sz_ssize_t> {reinterpret_cast<sz_ptr_t>(results), results_stride};
+
+    // The simplest case, is having non-optimized non-unrolled hashers.
+    sz_status_t result = sz_success_k;
+    auto variant_logic = [&](auto &engine_variant) {
+        constexpr sz_capability_t engine_capability_k = engine_variant.capability_k;
+
+        // GPU backends are only compatible with GPU scopes
+        if constexpr (is_gpu_capability(engine_capability_k)) {
+#if SZ_USE_CUDA
+            if (std::holds_alternative<gpu_scope_t>(device->variants)) {
+                auto &device_scope = std::get<gpu_scope_t>(device->variants);
+                sz::status_t status = engine_variant(          //
+                    a_container, b_container, results_strided, //
+                    get_executor(device_scope), get_specs(device_scope));
+                result = static_cast<sz_status_t>(status);
+            }
+            else { result = sz_status_unknown_k; }
+#else
+            result = sz_status_unknown_k; // GPU support is not enabled
+#endif // SZ_USE_CUDA
+        }
+        // CPU backends are only compatible with CPU scopes
+        else {
+            if (std::holds_alternative<default_scope_t>(device->variants)) {
+                auto &device_scope = std::get<default_scope_t>(device->variants);
+                sz::status_t status = engine_variant(          //
+                    a_container, b_container, results_strided, //
+                    get_executor(device_scope), get_specs(device_scope));
+                result = static_cast<sz_status_t>(status);
+            }
+            else if (std::holds_alternative<cpu_scope_t>(device->variants)) {
+                auto &device_scope = std::get<cpu_scope_t>(device->variants);
+                sz::status_t status = engine_variant(          //
+                    a_container, b_container, results_strided, //
+                    get_executor(device_scope), get_specs(device_scope));
+                result = static_cast<sz_status_t>(status);
+            }
+            else { result = sz_status_unknown_k; }
+        }
+    };
+
+    std::visit(variant_logic, engine->variants);
+    return result;
+}
+
+struct smith_waterman_backends_t {
+
+    /**
+     *  On each hardware platform we use a different backend for Levenshtein distances,
+     *  separately covering:
+     *  - Linear or Affine gap costs
+     *  - Serial, Ice Lake, CUDA, CUDA Kepler, and CUDA Hopper backends
+     */
+    std::variant<
+#if SZ_USE_ICE
+        szs::smith_waterman_ice_t, // ! No affine variant here yet
+#endif
+#if SZ_USE_CUDA
+        szs::smith_waterman_cuda_t, szs::affine_smith_waterman_cuda_t,
+#endif
+#if SZ_USE_HOPPER
+        szs::smith_waterman_hopper_t, szs::affine_smith_waterman_hopper_t,
+#endif
+        szs::smith_waterman_serial_t, szs::affine_smith_waterman_serial_t>
+        variants;
+
+    template <typename... variants_arguments_>
+    smith_waterman_backends_t(variants_arguments_ &&...args) noexcept
+        : variants(std::forward<variants_arguments_>(args)...) {}
+};
+
+template <typename texts_type_>
+sz_status_t sz_smith_waterman_scores_for_(                                     //
+    sz_smith_waterman_scores_t engine_punned, sz_device_scope_t device_punned, //
+    texts_type_ const &a_container, texts_type_ const &b_container,            //
+    sz_ssize_t *results, sz_size_t results_stride) {
+
+    sz_assert_(engine_punned != nullptr && "Engine must be initialized");
+    sz_assert_(device_punned != nullptr && "Device must be initialized");
+    sz_assert_(results != nullptr && "Results must not be null");
+
+    // Revert back from opaque pointer types
+    auto *engine = reinterpret_cast<smith_waterman_backends_t *>(engine_punned);
     auto *device = reinterpret_cast<device_scope_t *>(device_punned);
 
     // Wrap our stable ABI sequences into C++ friendly containers
@@ -479,7 +579,8 @@ struct fingerprints_backends_t {
 #if SZ_USE_CUDA
         vec<szs::floating_rolling_hashers<sz_cap_cuda_k, fingerprint_slice_k>>,
 #endif
-        vec<szs::floating_rolling_hashers<sz_cap_serial_k, fingerprint_slice_k>>, fallback_variant_t>
+        vec<szs::floating_rolling_hashers<sz_cap_serial_k, fingerprint_slice_k>>, //
+        fallback_variant_t>
         variants;
 
     sz_size_t dimensions = 0; // Total number of dimensions across all hashers
@@ -492,7 +593,7 @@ struct fingerprints_backends_t {
 template <typename texts_type_>
 sz_status_t sz_fingerprints_for_(                                     //
     sz_fingerprints_t engine_punned, sz_device_scope_t device_punned, //
-    texts_type_ &&texts_container,                                    //
+    texts_type_ const &texts_container,                               //
     sz_u32_t *min_hashes, sz_size_t min_hashes_stride,                //
     sz_u32_t *min_counts, sz_size_t min_counts_stride) {
 
@@ -508,15 +609,16 @@ sz_status_t sz_fingerprints_for_(                                     //
     // Wrap our stable ABI sequences into C++ friendly containers
     auto const dims = engine->dimensions;
     auto const texts_count = texts_container.size();
-    auto min_hashes_rows =
-        strided_rows<sz_u32_t> {reinterpret_cast<sz_ptr_t>(min_hashes), dims, min_hashes_stride, texts_count};
-    auto min_counts_rows =
-        strided_rows<sz_u32_t> {reinterpret_cast<sz_ptr_t>(min_counts), dims, min_counts_stride, texts_count};
 
     // The simplest case, is having non-optimized non-unrolled hashers.
     sz_status_t result = sz_success_k;
     using fallback_variant_t = typename fingerprints_backends_t::fallback_variant_t;
     auto fallback_logic = [&](fallback_variant_t &fallback_hashers) {
+        auto const min_hashes_rows = //
+            strided_rows<sz_u32_t> {reinterpret_cast<sz_ptr_t>(min_hashes), dims, min_hashes_stride, texts_count};
+        auto const min_counts_rows = //
+            strided_rows<sz_u32_t> {reinterpret_cast<sz_ptr_t>(min_counts), dims, min_counts_stride, texts_count};
+
         // CPU fallback hashers can only work with CPU-compatible device scopes
         if (std::holds_alternative<default_scope_t>(device->variants)) {
             auto &device_scope = std::get<default_scope_t>(device->variants);
@@ -537,7 +639,70 @@ sz_status_t sz_fingerprints_for_(                                     //
 
     // The unrolled logic is a bit more complex than `fallback_logic`, but in practice involves
     // just one additional loop level.
-    auto unrolled_logic = [&](auto &&unrolled_hashers) { std::printf("Unrolled hashers with %zu dimensions\n", dims); };
+    auto unrolled_logic = [&](auto &&unrolled_hashers) {
+        using unrolled_hashers_t = std::decay_t<decltype(unrolled_hashers)>;
+        using unrolled_hasher_t = typename unrolled_hashers_t::value_type;
+        constexpr sz_capability_t engine_capability_k = unrolled_hasher_t::capability_k;
+        constexpr size_t bytes_per_slice_k = fingerprint_slice_k * sizeof(sz_u32_t);
+
+        // Each engine will produce only a few dimensions so the outputs should be defined
+        // differently
+        auto const min_hashes_rows = //
+            strided_rows<sz_u32_t> {reinterpret_cast<sz_ptr_t>(min_hashes), fingerprint_slice_k, min_hashes_stride,
+                                    texts_count};
+        auto const min_counts_rows = //
+            strided_rows<sz_u32_t> {reinterpret_cast<sz_ptr_t>(min_counts), fingerprint_slice_k, min_counts_stride,
+                                    texts_count};
+
+        // GPU backends are only compatible with GPU scopes
+        if constexpr (is_gpu_capability(engine_capability_k)) {
+#if SZ_USE_CUDA
+            if (std::holds_alternative<gpu_scope_t>(device->variants)) {
+                auto &device_scope = std::get<gpu_scope_t>(device->variants);
+                for (std::size_t i = 0; i < unrolled_hashers.size(); ++i) {
+                    auto &engine_variant = unrolled_hashers[i];
+                    sz::status_t status = engine_variant(                                             //
+                        texts_container,                                                              //
+                        min_hashes_rows.template shifted<fingerprint_slice_k>(i * bytes_per_slice_k), //
+                        min_counts_rows.template shifted<fingerprint_slice_k>(i * bytes_per_slice_k), //
+                        get_executor(device_scope), get_specs(device_scope));
+                    result = static_cast<sz_status_t>(status);
+                }
+            }
+            else { result = sz_status_unknown_k; }
+#else
+            result = sz_status_unknown_k; // GPU support is not enabled
+#endif // SZ_USE_CUDA
+        }
+        // CPU backends are only compatible with CPU scopes
+        else {
+            if (std::holds_alternative<default_scope_t>(device->variants)) {
+                auto &device_scope = std::get<default_scope_t>(device->variants);
+                for (std::size_t i = 0; i < unrolled_hashers.size(); ++i) {
+                    auto &engine_variant = unrolled_hashers[i];
+                    sz::status_t status = engine_variant(                                             //
+                        texts_container,                                                              //
+                        min_hashes_rows.template shifted<fingerprint_slice_k>(i * bytes_per_slice_k), //
+                        min_counts_rows.template shifted<fingerprint_slice_k>(i * bytes_per_slice_k), //
+                        get_executor(device_scope), get_specs(device_scope));
+                    result = static_cast<sz_status_t>(status);
+                }
+            }
+            else if (std::holds_alternative<cpu_scope_t>(device->variants)) {
+                auto &device_scope = std::get<cpu_scope_t>(device->variants);
+                for (std::size_t i = 0; i < unrolled_hashers.size(); ++i) {
+                    auto &engine_variant = unrolled_hashers[i];
+                    sz::status_t status = engine_variant(                                             //
+                        texts_container,                                                              //
+                        min_hashes_rows.template shifted<fingerprint_slice_k>(i * bytes_per_slice_k), //
+                        min_counts_rows.template shifted<fingerprint_slice_k>(i * bytes_per_slice_k), //
+                        get_executor(device_scope), get_specs(device_scope));
+                    result = static_cast<sz_status_t>(status);
+                }
+            }
+            else { result = sz_status_unknown_k; }
+        }
+    };
 
     std::visit(overloaded {fallback_logic, unrolled_logic}, engine->variants);
     return result;
@@ -605,10 +770,10 @@ SZ_DYNAMIC sz_status_t sz_device_scope_init_gpu_device(sz_size_t gpu_device, sz_
 #if SZ_USE_CUDA
     sz::gpu_specs_t specs;
     auto specs_status = szs::gpu_specs_fetch(specs, static_cast<int>(gpu_device));
-    if (specs_status.status != sz::status_t::success_k) return static_cast<sz_status_t>(specs_status.status);
+    if (specs_status.status != sz::status_t::success_k) { return static_cast<sz_status_t>(specs_status.status); }
     szs::cuda_executor_t executor;
     auto executor_status = executor.try_scheduling(static_cast<int>(gpu_device));
-    if (executor_status.status != sz::status_t::success_k) return static_cast<sz_status_t>(executor_status.status);
+    if (executor_status.status != sz::status_t::success_k) { return static_cast<sz_status_t>(executor_status.status); }
 
     auto *scope =
         new (std::nothrow) device_scope_t {gpu_scope_t {.executor = std::move(executor), .specs = std::move(specs)}};
@@ -646,7 +811,7 @@ SZ_DYNAMIC sz_status_t sz_levenshtein_distances_init(                           
     auto const affine_costs = szs::affine_gap_costs_t {open, extend};
 
 #if SZ_USE_ICE
-    bool const can_use_ice = (capabilities & sz_cap_serial_k) == sz_cap_serial_k;
+    bool const can_use_ice = (capabilities & sz_cap_ice_k) == sz_cap_ice_k;
     if (can_use_ice && can_use_linear_costs) {
         auto variant = szs::levenshtein_ice_t(substitution_costs, linear_costs);
         auto engine = new (std::nothrow)
@@ -690,7 +855,7 @@ SZ_DYNAMIC sz_status_t sz_levenshtein_distances_init(                           
 #endif // SZ_USE_CUDA
 
 #if SZ_USE_KEPLER
-    bool const can_use_kepler = (capabilities & sz_cap_ck_k) == sz_cap_ck_k;
+    bool const can_use_kepler = (capabilities & sz_caps_ck_k) == sz_caps_ck_k;
     if (can_use_kepler && can_use_linear_costs) {
         auto variant = szs::levenshtein_kepler_t(substitution_costs, linear_costs);
         auto engine = new (std::nothrow)
@@ -826,15 +991,6 @@ SZ_DYNAMIC sz_status_t sz_levenshtein_distances_utf8_init(                      
         *engine_punned = reinterpret_cast<sz_levenshtein_distances_utf8_t>(engine);
         return sz_success_k;
     }
-    else {
-        auto variant = szs::affine_levenshtein_utf8_ice_t(substitution_costs, affine_costs);
-        auto engine = new (std::nothrow)
-            levenshtein_utf8_backends_t(std::in_place_type_t<szs::affine_levenshtein_utf8_ice_t>(), std::move(variant));
-        if (!engine) return sz_bad_alloc_k;
-
-        *engine_punned = reinterpret_cast<sz_levenshtein_distances_utf8_t>(engine);
-        return sz_success_k;
-    }
 #endif // SZ_USE_ICE
 
     bool const can_use_serial = (capabilities & sz_cap_serial_k) == sz_cap_serial_k;
@@ -923,11 +1079,11 @@ SZ_DYNAMIC sz_status_t sz_needleman_wunsch_scores_init(                        /
     auto const affine_costs = szs::affine_gap_costs_t {open, extend};
 
 #if SZ_USE_ICE
-    bool const can_use_ice = (capabilities & sz_cap_serial_k) == sz_cap_serial_k;
+    bool const can_use_ice = (capabilities & sz_cap_ice_k) == sz_cap_ice_k;
     if (can_use_ice && can_use_linear_costs) {
         auto variant = szs::needleman_wunsch_ice_t(substitution_costs, linear_costs);
         auto engine = new (std::nothrow)
-            needleman_wunsch_scores_backends_t(std::in_place_type_t<szs::needleman_wunsch_ice_t>(), std::move(variant));
+            needleman_wunsch_backends_t(std::in_place_type_t<szs::needleman_wunsch_ice_t>(), std::move(variant));
         if (!engine) return sz_bad_alloc_k;
 
         *engine_punned = reinterpret_cast<sz_needleman_wunsch_scores_t>(engine);
@@ -939,17 +1095,17 @@ SZ_DYNAMIC sz_status_t sz_needleman_wunsch_scores_init(                        /
     bool const can_use_cuda = (capabilities & sz_cap_cuda_k) != 0;
     if (can_use_cuda && can_use_linear_costs) {
         auto variant = szs::needleman_wunsch_cuda_t(substitution_costs, linear_costs);
-        auto engine = new (std::nothrow) needleman_wunsch_scores_backends_t(
-            std::in_place_type_t<szs::needleman_wunsch_cuda_t>(), std::move(variant));
+        auto engine = new (std::nothrow)
+            needleman_wunsch_backends_t(std::in_place_type_t<szs::needleman_wunsch_cuda_t>(), std::move(variant));
         if (!engine) return sz_bad_alloc_k;
 
         *engine_punned = reinterpret_cast<sz_needleman_wunsch_scores_t>(engine);
         return sz_success_k;
     }
     else if (can_use_cuda) {
-        auto variant = affine_needleman_wunsch_cuda_t(substitution_costs, affine_costs);
-        auto engine = new (std::nothrow) needleman_wunsch_scores_backends_t(
-            std::in_place_type_t<affine_needleman_wunsch_cuda_t>(), std::move(variant));
+        auto variant = szs::affine_needleman_wunsch_cuda_t(substitution_costs, affine_costs);
+        auto engine = new (std::nothrow) needleman_wunsch_backends_t(
+            std::in_place_type_t<szs::affine_needleman_wunsch_cuda_t>(), std::move(variant));
         if (!engine) return sz_bad_alloc_k;
 
         *engine_punned = reinterpret_cast<sz_needleman_wunsch_scores_t>(engine);
@@ -961,8 +1117,8 @@ SZ_DYNAMIC sz_status_t sz_needleman_wunsch_scores_init(                        /
     bool const can_use_hopper = (capabilities & sz_caps_ckh_k) == sz_caps_ckh_k;
     if (can_use_hopper && can_use_linear_costs) {
         auto variant = szs::needleman_wunsch_hopper_t(substitution_costs, linear_costs);
-        auto engine = new (std::nothrow) needleman_wunsch_scores_backends_t(
-            std::in_place_type_t<szs::needleman_wunsch_hopper_t>(), std::move(variant));
+        auto engine = new (std::nothrow)
+            needleman_wunsch_backends_t(std::in_place_type_t<szs::needleman_wunsch_hopper_t>(), std::move(variant));
         if (!engine) return sz_bad_alloc_k;
 
         *engine_punned = reinterpret_cast<sz_needleman_wunsch_scores_t>(engine);
@@ -970,7 +1126,7 @@ SZ_DYNAMIC sz_status_t sz_needleman_wunsch_scores_init(                        /
     }
     else if (can_use_hopper) {
         auto variant = szs::affine_needleman_wunsch_hopper_t(substitution_costs, affine_costs);
-        auto engine = new (std::nothrow) needleman_wunsch_scores_backends_t(
+        auto engine = new (std::nothrow) needleman_wunsch_backends_t(
             std::in_place_type_t<szs::affine_needleman_wunsch_hopper_t>(), std::move(variant));
         if (!engine) return sz_bad_alloc_k;
 
@@ -981,8 +1137,8 @@ SZ_DYNAMIC sz_status_t sz_needleman_wunsch_scores_init(                        /
 
     if (can_use_linear_costs) {
         auto variant = szs::needleman_wunsch_serial_t(substitution_costs, linear_costs);
-        auto engine = new (std::nothrow) needleman_wunsch_scores_backends_t(
-            std::in_place_type_t<szs::needleman_wunsch_serial_t>(), std::move(variant));
+        auto engine = new (std::nothrow)
+            needleman_wunsch_backends_t(std::in_place_type_t<szs::needleman_wunsch_serial_t>(), std::move(variant));
         if (!engine) return sz_bad_alloc_k;
 
         *engine_punned = reinterpret_cast<sz_needleman_wunsch_scores_t>(engine);
@@ -990,7 +1146,7 @@ SZ_DYNAMIC sz_status_t sz_needleman_wunsch_scores_init(                        /
     }
     else {
         auto variant = szs::affine_needleman_wunsch_serial_t(substitution_costs, affine_costs);
-        auto engine = new (std::nothrow) needleman_wunsch_scores_backends_t(
+        auto engine = new (std::nothrow) needleman_wunsch_backends_t(
             std::in_place_type_t<szs::affine_needleman_wunsch_serial_t>(), std::move(variant));
         if (!engine) return sz_bad_alloc_k;
 
@@ -1040,46 +1196,288 @@ SZ_DYNAMIC sz_status_t sz_needleman_wunsch_scores_u64tape(                      
 
 SZ_DYNAMIC void sz_needleman_wunsch_scores_free(sz_needleman_wunsch_scores_t engine_punned) {
     sz_assert_(engine_punned != nullptr && "Engine must be initialized");
-    auto *engine = reinterpret_cast<needleman_wunsch_scores_backends_t *>(engine_punned);
+    auto *engine = reinterpret_cast<needleman_wunsch_backends_t *>(engine_punned);
     delete engine;
 }
 
 #pragma endregion Needleman Wunsch
 
+#pragma region Smith Waterman
+
+SZ_DYNAMIC sz_status_t sz_smith_waterman_scores_init(                          //
+    sz_error_cost_t const *subs, sz_error_cost_t open, sz_error_cost_t extend, //
+    sz_memory_allocator_t const *alloc, sz_capability_t capabilities,          //
+    sz_smith_waterman_scores_t *engine_punned) {
+
+    sz_assert_(engine_punned != nullptr && *engine_punned == nullptr && "Engine must be uninitialized");
+
+    // If the gap opening and extension costs are identical we can use less memory
+    auto const can_use_linear_costs = open == extend;
+    auto const substitution_costs = *reinterpret_cast<szs::error_costs_256x256_t const *>(subs);
+    auto const linear_costs = szs::linear_gap_costs_t {open};
+    auto const affine_costs = szs::affine_gap_costs_t {open, extend};
+
+#if SZ_USE_ICE
+    bool const can_use_ice = (capabilities & sz_cap_ice_k) == sz_cap_ice_k;
+    if (can_use_ice && can_use_linear_costs) {
+        auto variant = szs::smith_waterman_ice_t(substitution_costs, linear_costs);
+        auto engine = new (std::nothrow)
+            smith_waterman_backends_t(std::in_place_type_t<szs::smith_waterman_ice_t>(), std::move(variant));
+        if (!engine) return sz_bad_alloc_k;
+
+        *engine_punned = reinterpret_cast<sz_smith_waterman_scores_t>(engine);
+        return sz_success_k;
+    }
+#endif // SZ_USE_ICE
+
+#if SZ_USE_CUDA
+    bool const can_use_cuda = (capabilities & sz_cap_cuda_k) != 0;
+    if (can_use_cuda && can_use_linear_costs) {
+        auto variant = szs::smith_waterman_cuda_t(substitution_costs, linear_costs);
+        auto engine = new (std::nothrow)
+            smith_waterman_backends_t(std::in_place_type_t<szs::smith_waterman_cuda_t>(), std::move(variant));
+        if (!engine) return sz_bad_alloc_k;
+
+        *engine_punned = reinterpret_cast<sz_smith_waterman_scores_t>(engine);
+        return sz_success_k;
+    }
+    else if (can_use_cuda) {
+        auto variant = szs::affine_smith_waterman_cuda_t(substitution_costs, affine_costs);
+        auto engine = new (std::nothrow)
+            smith_waterman_backends_t(std::in_place_type_t<szs::affine_smith_waterman_cuda_t>(), std::move(variant));
+        if (!engine) return sz_bad_alloc_k;
+
+        *engine_punned = reinterpret_cast<sz_smith_waterman_scores_t>(engine);
+        return sz_success_k;
+    }
+#endif // SZ_USE_CUDA
+
+#if SZ_USE_HOPPER
+    bool const can_use_hopper = (capabilities & sz_caps_ckh_k) == sz_caps_ckh_k;
+    if (can_use_hopper && can_use_linear_costs) {
+        auto variant = szs::smith_waterman_hopper_t(substitution_costs, linear_costs);
+        auto engine = new (std::nothrow)
+            smith_waterman_backends_t(std::in_place_type_t<szs::smith_waterman_hopper_t>(), std::move(variant));
+        if (!engine) return sz_bad_alloc_k;
+
+        *engine_punned = reinterpret_cast<sz_smith_waterman_scores_t>(engine);
+        return sz_success_k;
+    }
+    else if (can_use_hopper) {
+        auto variant = szs::affine_smith_waterman_hopper_t(substitution_costs, affine_costs);
+        auto engine = new (std::nothrow)
+            smith_waterman_backends_t(std::in_place_type_t<szs::affine_smith_waterman_hopper_t>(), std::move(variant));
+        if (!engine) return sz_bad_alloc_k;
+
+        *engine_punned = reinterpret_cast<sz_smith_waterman_scores_t>(engine);
+        return sz_success_k;
+    }
+#endif // SZ_USE_HOPPER
+
+    if (can_use_linear_costs) {
+        auto variant = szs::smith_waterman_serial_t(substitution_costs, linear_costs);
+        auto engine = new (std::nothrow)
+            smith_waterman_backends_t(std::in_place_type_t<szs::smith_waterman_serial_t>(), std::move(variant));
+        if (!engine) return sz_bad_alloc_k;
+
+        *engine_punned = reinterpret_cast<sz_smith_waterman_scores_t>(engine);
+        return sz_success_k;
+    }
+    else {
+        auto variant = szs::affine_smith_waterman_serial_t(substitution_costs, affine_costs);
+        auto engine = new (std::nothrow)
+            smith_waterman_backends_t(std::in_place_type_t<szs::affine_smith_waterman_serial_t>(), std::move(variant));
+        if (!engine) return sz_bad_alloc_k;
+
+        *engine_punned = reinterpret_cast<sz_smith_waterman_scores_t>(engine);
+        return sz_success_k;
+    }
+}
+
+SZ_DYNAMIC sz_status_t sz_smith_waterman_scores_sequence(                      //
+    sz_smith_waterman_scores_t engine_punned, sz_device_scope_t device_punned, //
+    sz_sequence_t const *a, sz_sequence_t const *b,                            //
+    sz_ssize_t *results, sz_size_t results_stride) {
+
+    sz_assert_(a != nullptr && b != nullptr && "Input texts cannot be null");
+    auto a_container = sz_sequence_as_cpp_container_t {a};
+    auto b_container = sz_sequence_as_cpp_container_t {b};
+    return sz_smith_waterman_scores_for_(                       //
+        engine_punned, device_punned, a_container, b_container, //
+        results, results_stride);
+}
+
+SZ_DYNAMIC sz_status_t sz_smith_waterman_scores_u32tape(                       //
+    sz_smith_waterman_scores_t engine_punned, sz_device_scope_t device_punned, //
+    sz_sequence_u32tape_t const *a, sz_sequence_u32tape_t const *b,            //
+    sz_ssize_t *results, sz_size_t results_stride) {
+
+    sz_assert_(a != nullptr && b != nullptr && "Input texts cannot be null");
+    auto a_container = sz_sequence_u32tape_as_cpp_container_t {a};
+    auto b_container = sz_sequence_u32tape_as_cpp_container_t {b};
+    return sz_smith_waterman_scores_for_(                       //
+        engine_punned, device_punned, a_container, b_container, //
+        results, results_stride);
+}
+
+SZ_DYNAMIC sz_status_t sz_smith_waterman_scores_u64tape(                       //
+    sz_smith_waterman_scores_t engine_punned, sz_device_scope_t device_punned, //
+    sz_sequence_u64tape_t const *a, sz_sequence_u64tape_t const *b,            //
+    sz_ssize_t *results, sz_size_t results_stride) {
+
+    sz_assert_(a != nullptr && b != nullptr && "Input texts cannot be null");
+    auto a_container = sz_sequence_u64tape_as_cpp_container_t {a};
+    auto b_container = sz_sequence_u64tape_as_cpp_container_t {b};
+    return sz_smith_waterman_scores_for_(                       //
+        engine_punned, device_punned, a_container, b_container, //
+        results, results_stride);
+}
+
+SZ_DYNAMIC void sz_smith_waterman_scores_free(sz_smith_waterman_scores_t engine_punned) {
+    sz_assert_(engine_punned != nullptr && "Engine must be initialized");
+    auto *engine = reinterpret_cast<smith_waterman_backends_t *>(engine_punned);
+    delete engine;
+}
+
+#pragma endregion Smith Waterman
+
 #pragma region Fingerprints
 
-SZ_DYNAMIC sz_status_t sz_fingerprints_init(                              //
-    sz_size_t alphabet_size, sz_size_t const *window_widths,              //
-    sz_size_t window_widths_count, sz_size_t dimensions_per_window_width, //
-    sz_memory_allocator_t const *alloc, sz_capability_t capabilities,     //
+SZ_DYNAMIC sz_status_t sz_fingerprints_init(                          //
+    sz_size_t dimensions, sz_size_t alphabet_size,                    //
+    sz_size_t const *window_widths, sz_size_t window_widths_count,    //
+    sz_memory_allocator_t const *alloc, sz_capability_t capabilities, //
     sz_fingerprints_t *engine_punned) {
 
     sz_assert_(engine_punned != nullptr && *engine_punned == nullptr && "Engine must be uninitialized");
 
-    // If window widths are not provided, let's pick some of the default configurations.
-    auto const dimensions = window_widths_count * dimensions_per_window_width;
-    auto const can_use_sliced_sketchers = dimensions_per_window_width % fingerprint_slice_k == 0;
+    // Use some default window widths if none are provided
+    sz_size_t const default_window_widths[] = {3, 4, 5, 7, 9, 11, 15, 31};
+    if (!window_widths || window_widths_count == 0) {
+        window_widths = default_window_widths;
+        window_widths_count = sizeof(default_window_widths) / sizeof(sz_size_t);
+    }
+
+    // For optimal performance the number of dimensions per window width must be divisible by the fingerprint slice.
+    auto const dimensions_per_window_width_min = dimensions / window_widths_count;
+    auto const dimensions_per_window_width_max = sz::divide_round_up(dimensions, window_widths_count);
+    auto const can_use_sliced_sketchers = (dimensions_per_window_width_min == dimensions_per_window_width_max) &&
+                                          (dimensions_per_window_width_min % fingerprint_slice_k == 0);
     using fallback_variant_t = typename fingerprints_backends_t::fallback_variant_t;
 
-    if (!can_use_sliced_sketchers) {
-        auto variant = fallback_variant_t();
-        for (size_t window_width_index = 0; window_width_index < window_widths_count; ++window_width_index) {
-            auto const window_width = window_widths[window_width_index];
-            auto extend_status = variant.try_extend(window_width, dimensions_per_window_width, alphabet_size);
-            if (extend_status != sz::status_t::success_k) return static_cast<sz_status_t>(extend_status);
+#if SZ_USE_HASWELL
+    bool const can_use_haswell = (capabilities & sz_cap_haswell_k) == sz_cap_haswell_k;
+    if (can_use_haswell && can_use_sliced_sketchers) {
+        auto const count_hashers = dimensions / fingerprint_slice_k;
+        using hasher_t = szs::floating_rolling_hashers<sz_cap_haswell_k, fingerprint_slice_k>;
+        vec<hasher_t> hashers;
+        if (hashers.try_resize(count_hashers) != sz::status_t::success_k) return sz_bad_alloc_k;
+
+        // Populate the hashers with the given window widths
+        for (size_t i = 0; i < count_hashers; ++i) {
+            auto const window_width = window_widths[i % window_widths_count];
+            auto const first_dimension_offset = i * fingerprint_slice_k;
+            auto const seed_status = hashers[i].try_seed(window_width, alphabet_size, first_dimension_offset);
+            if (seed_status != sz::status_t::success_k) return static_cast<sz_status_t>(seed_status);
         }
 
         auto engine =
-            new (std::nothrow) fingerprints_backends_t(std::in_place_type_t<fallback_variant_t>(), std::move(variant));
+            new (std::nothrow) fingerprints_backends_t(std::in_place_type_t<vec<hasher_t>>(), std::move(hashers));
         if (!engine) return sz_bad_alloc_k;
+        engine->dimensions = dimensions;
+        *engine_punned = reinterpret_cast<sz_fingerprints_t>(engine);
+        return sz_success_k;
+    }
+#endif // SZ_USE_HASWELL
 
+#if SZ_USE_SKYLAKE
+    bool const can_use_skylake = (capabilities & sz_cap_skylake_k) == sz_cap_skylake_k;
+    if (can_use_skylake && can_use_sliced_sketchers) {
+        auto const count_hashers = dimensions / fingerprint_slice_k;
+        using hasher_t = szs::floating_rolling_hashers<sz_cap_skylake_k, fingerprint_slice_k>;
+        vec<hasher_t> hashers;
+        if (hashers.try_resize(count_hashers) != sz::status_t::success_k) return sz_bad_alloc_k;
+
+        // Populate the hashers with the given window widths
+        for (size_t i = 0; i < count_hashers; ++i) {
+            auto const window_width = window_widths[i % window_widths_count];
+            auto const first_dimension_offset = i * fingerprint_slice_k;
+            auto const seed_status = hashers[i].try_seed(window_width, alphabet_size, first_dimension_offset);
+            if (seed_status != sz::status_t::success_k) return static_cast<sz_status_t>(seed_status);
+        }
+
+        auto engine =
+            new (std::nothrow) fingerprints_backends_t(std::in_place_type_t<vec<hasher_t>>(), std::move(hashers));
+        if (!engine) return sz_bad_alloc_k;
+        engine->dimensions = dimensions;
+        *engine_punned = reinterpret_cast<sz_fingerprints_t>(engine);
+        return sz_success_k;
+    }
+#endif // SZ_USE_SKYLAKE
+
+#if SZ_USE_CUDA
+    bool const can_use_cuda = (capabilities & sz_cap_cuda_k) == sz_cap_cuda_k;
+    if (can_use_cuda && can_use_sliced_sketchers) {
+        auto const count_hashers = dimensions / fingerprint_slice_k;
+        using hasher_t = szs::floating_rolling_hashers<sz_cap_cuda_k, fingerprint_slice_k>;
+        vec<hasher_t> hashers;
+        if (hashers.try_resize(count_hashers) != sz::status_t::success_k) return sz_bad_alloc_k;
+
+        // Populate the hashers with the given window widths
+        for (size_t i = 0; i < count_hashers; ++i) {
+            auto const window_width = window_widths[i % window_widths_count];
+            auto const first_dimension_offset = i * fingerprint_slice_k;
+            auto const seed_status = hashers[i].try_seed(window_width, alphabet_size, first_dimension_offset);
+            if (seed_status != sz::status_t::success_k) return static_cast<sz_status_t>(seed_status);
+        }
+
+        auto engine =
+            new (std::nothrow) fingerprints_backends_t(std::in_place_type_t<vec<hasher_t>>(), std::move(hashers));
+        if (!engine) return sz_bad_alloc_k;
+        engine->dimensions = dimensions;
+        *engine_punned = reinterpret_cast<sz_fingerprints_t>(engine);
+        return sz_success_k;
+    }
+#endif // SZ_USE_CUDA
+
+    // Build the vectorized, but serial backend
+    if (can_use_sliced_sketchers) {
+        auto const count_hashers = dimensions / fingerprint_slice_k;
+        using hasher_t = szs::floating_rolling_hashers<sz_cap_serial_k, fingerprint_slice_k>;
+        vec<hasher_t> hashers;
+        if (hashers.try_resize(count_hashers) != sz::status_t::success_k) return sz_bad_alloc_k;
+
+        // Populate the hashers with the given window widths
+        for (size_t i = 0; i < count_hashers; ++i) {
+            auto const window_width = window_widths[i % window_widths_count];
+            auto const first_dimension_offset = i * fingerprint_slice_k;
+            auto const seed_status = hashers[i].try_seed(window_width, alphabet_size, first_dimension_offset);
+            if (seed_status != sz::status_t::success_k) return static_cast<sz_status_t>(seed_status);
+        }
+
+        auto engine =
+            new (std::nothrow) fingerprints_backends_t(std::in_place_type_t<vec<hasher_t>>(), std::move(hashers));
+        if (!engine) return sz_bad_alloc_k;
         engine->dimensions = dimensions;
         *engine_punned = reinterpret_cast<sz_fingerprints_t>(engine);
         return sz_success_k;
     }
 
-    // TODO: Implement unrolled logic
-    return sz_status_unknown_k;
+    // Build the fallback variant with interleaving width dimensions
+    auto variant = fallback_variant_t();
+    for (size_t dimension = 0; dimension < dimensions; ++dimension) {
+        auto const window_width = window_widths[dimension % window_widths_count];
+        auto const extend_status = variant.try_extend(window_width, 1, alphabet_size);
+        if (extend_status != sz::status_t::success_k) return static_cast<sz_status_t>(extend_status);
+    }
+
+    auto engine =
+        new (std::nothrow) fingerprints_backends_t(std::in_place_type_t<fallback_variant_t>(), std::move(variant));
+    if (!engine) return sz_bad_alloc_k;
+
+    engine->dimensions = dimensions;
+    *engine_punned = reinterpret_cast<sz_fingerprints_t>(engine);
+    return sz_success_k;
 }
 
 SZ_DYNAMIC sz_status_t sz_fingerprints_sequence(                      //
@@ -1128,5 +1526,56 @@ SZ_DYNAMIC void sz_fingerprints_free(sz_fingerprints_t engine_punned) {
 }
 
 #pragma endregion Fingerprints
+
+#pragma region Fingerprints UTF8
+
+SZ_DYNAMIC sz_status_t sz_fingerprints_utf8_init(                     //
+    sz_size_t dimensions, sz_size_t alphabet_size,                    //
+    sz_size_t const *window_widths, sz_size_t window_widths_count,    //
+    sz_memory_allocator_t const *alloc, sz_capability_t capabilities, //
+    sz_fingerprints_utf8_t *engine_punned) {
+
+    return sz_fingerprints_init( //
+        dimensions, alphabet_size, window_widths, window_widths_count, alloc, capabilities, engine_punned);
+}
+
+SZ_DYNAMIC sz_status_t sz_fingerprints_utf8_sequence(                      //
+    sz_fingerprints_utf8_t engine_punned, sz_device_scope_t device_punned, //
+    sz_sequence_t const *texts,                                            //
+    sz_u32_t *min_hashes, sz_size_t min_hashes_stride,                     //
+    sz_u32_t *min_counts, sz_size_t min_counts_stride) {
+
+    return sz_fingerprints_sequence(         //
+        engine_punned, device_punned, texts, //
+        min_hashes, min_hashes_stride, min_counts, min_counts_stride);
+}
+
+SZ_DYNAMIC sz_status_t sz_fingerprints_utf8_u32tape(                       //
+    sz_fingerprints_utf8_t engine_punned, sz_device_scope_t device_punned, //
+    sz_sequence_u32tape_t const *texts,                                    //
+    sz_u32_t *min_hashes, sz_size_t min_hashes_stride,                     //
+    sz_u32_t *min_counts, sz_size_t min_counts_stride) {
+
+    return sz_fingerprints_u32tape(          //
+        engine_punned, device_punned, texts, //
+        min_hashes, min_hashes_stride, min_counts, min_counts_stride);
+}
+
+SZ_DYNAMIC sz_status_t sz_fingerprints_utf8_u64tape(                       //
+    sz_fingerprints_utf8_t engine_punned, sz_device_scope_t device_punned, //
+    sz_sequence_u64tape_t const *texts,                                    //
+    sz_u32_t *min_hashes, sz_size_t min_hashes_stride,                     //
+    sz_u32_t *min_counts, sz_size_t min_counts_stride) {
+
+    return sz_fingerprints_u64tape(          //
+        engine_punned, device_punned, texts, //
+        min_hashes, min_hashes_stride, min_counts, min_counts_stride);
+}
+
+SZ_DYNAMIC void sz_fingerprints_utf8_free(sz_fingerprints_utf8_t engine_punned) {
+    return sz_fingerprints_free(engine_punned);
+}
+
+#pragma endregion Fingerprints UTF8
 
 } // extern "C"

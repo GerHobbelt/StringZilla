@@ -47,6 +47,29 @@ typedef SSIZE_T ssize_t;
 
 #pragma region Forward Declarations
 
+/**
+ *  @brief Creates a Python tuple from capabilities mask.
+ *  @param[in] caps Capabilities mask
+ *  @return New reference to Python tuple, or NULL on error
+ */
+static PyObject *capabilities_to_tuple(sz_capability_t caps) {
+    char const *cap_strings[SZ_CAPABILITIES_COUNT];
+    sz_size_t cap_count = sz_capabilities_to_strings_implementation_(caps, cap_strings, SZ_CAPABILITIES_COUNT);
+
+    PyObject *caps_tuple = PyTuple_New(cap_count);
+    if (!caps_tuple) return NULL;
+
+    for (sz_size_t i = 0; i < cap_count; i++) {
+        PyObject *cap_str = PyUnicode_FromString(cap_strings[i]);
+        if (!cap_str) {
+            Py_DECREF(caps_tuple);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(caps_tuple, i, cap_str);
+    }
+    return caps_tuple;
+}
+
 // Try to import NumPy, and fail if it's not available
 static int numpy_available = 0;
 static PyObject *numpy_module = NULL;
@@ -57,29 +80,52 @@ static PyTypeObject LevenshteinDistancesUTF8Type;
 static PyTypeObject NeedlemanWunschType;
 static PyTypeObject SmithWatermanType;
 static PyTypeObject FingerprintsType;
-static PyTypeObject FingerprintsUTF8Type;
 
 // Function pointers for stringzilla functions imported from capsules
 static sz_bool_t (*sz_py_export_string_like)(PyObject *, sz_cptr_t *, sz_size_t *) = NULL;
 static sz_bool_t (*sz_py_export_strings_as_sequence)(PyObject *, sz_sequence_t *) = NULL;
 static sz_bool_t (*sz_py_export_strings_as_u32tape)(PyObject *, sz_cptr_t *, sz_u32_t const **, sz_size_t *) = NULL;
 static sz_bool_t (*sz_py_export_strings_as_u64tape)(PyObject *, sz_cptr_t *, sz_u64_t const **, sz_size_t *) = NULL;
+static sz_bool_t (*sz_py_replace_strings_allocator)(PyObject *, sz_memory_allocator_t *) = NULL;
 
 // Default device scope that can be safely reused across calls
 // The underlying implementation is stateless and thread-safe
 static sz_device_scope_t default_device_scope = NULL;
 // Static variable to store hardware capabilities
 static sz_capability_t default_hardware_capabilities = 0;
+// Static unified memory allocator for GPU compatibility
+static sz_memory_allocator_t unified_allocator;
 
 typedef struct PyAPI {
     sz_bool_t (*sz_py_export_string_like)(PyObject *, sz_cptr_t *, sz_size_t *);
     sz_bool_t (*sz_py_export_strings_as_sequence)(PyObject *, sz_sequence_t *);
     sz_bool_t (*sz_py_export_strings_as_u32tape)(PyObject *, sz_cptr_t *, sz_u32_t const **, sz_size_t *);
     sz_bool_t (*sz_py_export_strings_as_u64tape)(PyObject *, sz_cptr_t *, sz_u64_t const **, sz_size_t *);
+    sz_bool_t (*sz_py_replace_strings_allocator)(PyObject *, sz_memory_allocator_t *);
 } PyAPI;
 
 // Method flags
 #define SZ_METHOD_FLAGS METH_VARARGS | METH_KEYWORDS
+
+/**
+ *  @brief  Helper function to automatically swap a Strs object's allocator to unified memory.
+ *          This ensures GPU compatibility for string operations.
+ *  @param[in] strs_obj The Strs object to swap allocator for
+ *  @return sz_true_k on success, sz_false_k on failure
+ */
+static sz_bool_t try_swap_to_unified_allocator(PyObject *strs_obj) {
+    if (!strs_obj || !sz_py_replace_strings_allocator) return sz_false_k;
+
+    // Try to swap to unified allocator - this will be a no-op if already using it
+    sz_bool_t success = sz_py_replace_strings_allocator(strs_obj, &unified_allocator);
+
+    if (!success) {
+        // Set Python error to inform user of the failure
+        PyErr_SetString(PyExc_RuntimeError, "Failed to allocate unified memory for GPU compatibility. "
+                                            "Consider reducing input size or freeing memory.");
+    }
+    return success;
+}
 
 #pragma endregion
 
@@ -107,7 +153,7 @@ static int parse_and_intersect_capabilities(PyObject *caps_tuple, sz_capability_
             return -1;
         }
 
-        const char *cap_str = PyUnicode_AsUTF8(item);
+        char const *cap_str = PyUnicode_AsUTF8(item);
         if (!cap_str) return -1;
 
         // Map string to capability flag
@@ -150,6 +196,7 @@ static int parse_and_intersect_capabilities(PyObject *caps_tuple, sz_capability_
 typedef struct {
     PyObject ob_base;
     sz_device_scope_t handle;
+    char description[32];
 } DeviceScope;
 
 static void DeviceScope_dealloc(DeviceScope *self) {
@@ -162,49 +209,24 @@ static void DeviceScope_dealloc(DeviceScope *self) {
 
 static PyObject *DeviceScope_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
     DeviceScope *self = (DeviceScope *)type->tp_alloc(type, 0);
-    if (self != NULL) { self->handle = NULL; }
+    if (self != NULL) {
+        self->handle = NULL;
+        self->description[0] = '\0';
+    }
     return (PyObject *)self;
 }
 
 static int DeviceScope_init(DeviceScope *self, PyObject *args, PyObject *kwargs) {
-    Py_ssize_t nargs = PyTuple_Size(args);
+    sz_size_t cpu_cores = 0;
+    sz_size_t gpu_device = 0;
+    int has_cpu_cores = 0;
+    int has_gpu_device = 0;
     PyObject *cpu_cores_obj = NULL;
     PyObject *gpu_device_obj = NULL;
 
-    // Manual argument parsing - check positional args first
-    if (nargs > 2) {
-        PyErr_SetString(PyExc_TypeError, "DeviceScope() takes at most 2 arguments");
-        return -1;
-    }
+    static char *kwlist[] = {"cpu_cores", "gpu_device", NULL};
 
-    if (nargs >= 1) cpu_cores_obj = PyTuple_GET_ITEM(args, 0);
-    if (nargs >= 2) gpu_device_obj = PyTuple_GET_ITEM(args, 1);
-
-    // Parse keyword arguments
-    if (kwargs) {
-        Py_ssize_t pos = 0;
-        PyObject *key, *value;
-        while (PyDict_Next(kwargs, &pos, &key, &value)) {
-            if (PyUnicode_CompareWithASCIIString(key, "cpu_cores") == 0) {
-                if (cpu_cores_obj) {
-                    PyErr_SetString(PyExc_TypeError, "cpu_cores specified twice");
-                    return -1;
-                }
-                cpu_cores_obj = value;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "gpu_device") == 0) {
-                if (gpu_device_obj) {
-                    PyErr_SetString(PyExc_TypeError, "gpu_device specified twice");
-                    return -1;
-                }
-                gpu_device_obj = value;
-            }
-            else {
-                PyErr_Format(PyExc_TypeError, "Got an unexpected keyword argument '%U'", key);
-                return -1;
-            }
-        }
-    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|OO", kwlist, &cpu_cores_obj, &gpu_device_obj)) { return -1; }
 
     sz_status_t status;
 
@@ -217,20 +239,25 @@ static int DeviceScope_init(DeviceScope *self, PyObject *args, PyObject *kwargs)
             PyErr_SetString(PyExc_TypeError, "cpu_cores must be an integer");
             return -1;
         }
-        sz_size_t cpu_cores = PyLong_AsSize_t(cpu_cores_obj);
+        cpu_cores = PyLong_AsSize_t(cpu_cores_obj);
         if (cpu_cores == (sz_size_t)-1 && PyErr_Occurred()) { return -1; }
         status = sz_device_scope_init_cpu_cores(cpu_cores, &self->handle);
+        snprintf(self->description, sizeof(self->description), "CPUs:%zu", cpu_cores);
     }
     else if (gpu_device_obj != NULL) {
         if (!PyLong_Check(gpu_device_obj)) {
             PyErr_SetString(PyExc_TypeError, "gpu_device must be an integer");
             return -1;
         }
-        sz_size_t gpu_device = PyLong_AsSize_t(gpu_device_obj);
+        gpu_device = PyLong_AsSize_t(gpu_device_obj);
         if (gpu_device == (sz_size_t)-1 && PyErr_Occurred()) { return -1; }
         status = sz_device_scope_init_gpu_device(gpu_device, &self->handle);
+        snprintf(self->description, sizeof(self->description), "GPU:%zu", gpu_device);
     }
-    else { status = sz_device_scope_init_default(&self->handle); }
+    else {
+        status = sz_device_scope_init_default(&self->handle);
+        snprintf(self->description, sizeof(self->description), "default");
+    }
 
     if (status != sz_success_k) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to initialize device scope");
@@ -238,6 +265,10 @@ static int DeviceScope_init(DeviceScope *self, PyObject *args, PyObject *kwargs)
     }
 
     return 0;
+}
+
+static PyObject *DeviceScope_repr(DeviceScope *self) {
+    return PyUnicode_FromFormat("DeviceScope(%s)", self->description);
 }
 
 static char const doc_DeviceScope[] = //
@@ -259,6 +290,7 @@ static PyTypeObject DeviceScopeType = {
     .tp_new = DeviceScope_new,
     .tp_init = (initproc)DeviceScope_init,
     .tp_dealloc = (destructor)DeviceScope_dealloc,
+    .tp_repr = (reprfunc)DeviceScope_repr,
 };
 
 #pragma endregion
@@ -271,6 +303,8 @@ static PyTypeObject DeviceScopeType = {
 typedef struct {
     PyObject ob_base;
     sz_levenshtein_distances_t handle;
+    char description[32];
+    sz_capability_t capabilities;
 } LevenshteinDistances;
 
 static void LevenshteinDistances_dealloc(LevenshteinDistances *self) {
@@ -283,180 +317,42 @@ static void LevenshteinDistances_dealloc(LevenshteinDistances *self) {
 
 static PyObject *LevenshteinDistances_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
     LevenshteinDistances *self = (LevenshteinDistances *)type->tp_alloc(type, 0);
-    if (self != NULL) { self->handle = NULL; }
+    if (self != NULL) {
+        self->handle = NULL;
+        self->description[0] = '\0';
+        self->capabilities = 0;
+    }
     return (PyObject *)self;
 }
 
 static int LevenshteinDistances_init(LevenshteinDistances *self, PyObject *args, PyObject *kwargs) {
-    Py_ssize_t nargs = PyTuple_Size(args);
-    sz_error_cost_t match = 0, mismatch = 1, open = 1, extend = 1;
+    int match = 0, mismatch = 1, open = 1, extend = 1;
     PyObject *capabilities_tuple = NULL;
     sz_capability_t capabilities = default_hardware_capabilities;
 
-    // Manual argument parsing - fast path for positional args
-    if (nargs >= 1) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 0);
-        if (PyLong_Check(obj)) {
-            long val = PyLong_AsLong(obj);
-            if (val < -128 || val > 127) {
-                PyErr_SetString(PyExc_ValueError, "match cost must fit in 8-bit signed integer");
-                return -1;
-            }
-            match = (sz_error_cost_t)val;
-        }
-        else {
-            PyErr_SetString(PyExc_TypeError, "match cost must be an integer");
-            return -1;
-        }
-    }
+    static char *kwlist[] = {"match", "mismatch", "open", "extend", "capabilities", NULL};
 
-    if (nargs >= 2) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 1);
-        if (PyLong_Check(obj)) {
-            long val = PyLong_AsLong(obj);
-            if (val < -128 || val > 127) {
-                PyErr_SetString(PyExc_ValueError, "mismatch cost must fit in 8-bit signed integer");
-                return -1;
-            }
-            mismatch = (sz_error_cost_t)val;
-        }
-        else {
-            PyErr_SetString(PyExc_TypeError, "mismatch cost must be an integer");
-            return -1;
-        }
-    }
-
-    if (nargs >= 3) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 2);
-        if (PyLong_Check(obj)) {
-            long val = PyLong_AsLong(obj);
-            if (val < -128 || val > 127) {
-                PyErr_SetString(PyExc_ValueError, "open cost must fit in 8-bit signed integer");
-                return -1;
-            }
-            open = (sz_error_cost_t)val;
-        }
-        else {
-            PyErr_SetString(PyExc_TypeError, "open cost must be an integer");
-            return -1;
-        }
-    }
-
-    if (nargs >= 4) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 3);
-        if (PyLong_Check(obj)) {
-            long val = PyLong_AsLong(obj);
-            if (val < -128 || val > 127) {
-                PyErr_SetString(PyExc_ValueError, "extend cost must fit in 8-bit signed integer");
-                return -1;
-            }
-            extend = (sz_error_cost_t)val;
-        }
-        else {
-            PyErr_SetString(PyExc_TypeError, "extend cost must be an integer");
-            return -1;
-        }
-    }
-
-    if (nargs >= 5) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 4);
-        if (PyTuple_Check(obj)) { capabilities_tuple = obj; }
-        else {
-            PyErr_SetString(PyExc_TypeError, "capabilities must be a tuple of strings");
-            return -1;
-        }
-    }
-
-    if (nargs > 5) {
-        PyErr_SetString(PyExc_TypeError, "LevenshteinDistances() takes at most 5 arguments");
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|iiiiO", kwlist, &match, &mismatch, &open, &extend,
+                                     &capabilities_tuple)) {
         return -1;
     }
 
-    // Parse keyword arguments
-    if (kwargs) {
-        Py_ssize_t pos = 0;
-        PyObject *key, *value;
-        while (PyDict_Next(kwargs, &pos, &key, &value)) {
-            if (PyUnicode_CompareWithASCIIString(key, "match") == 0) {
-                if (nargs >= 1) {
-                    PyErr_SetString(PyExc_TypeError, "match specified twice");
-                    return -1;
-                }
-                if (!PyLong_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "match must be an integer");
-                    return -1;
-                }
-                long val = PyLong_AsLong(value);
-                if (val < -128 || val > 127) {
-                    PyErr_SetString(PyExc_ValueError, "match cost must fit in 8-bit signed integer");
-                    return -1;
-                }
-                match = (sz_error_cost_t)val;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "mismatch") == 0) {
-                if (nargs >= 2) {
-                    PyErr_SetString(PyExc_TypeError, "mismatch specified twice");
-                    return -1;
-                }
-                if (!PyLong_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "mismatch must be an integer");
-                    return -1;
-                }
-                long val = PyLong_AsLong(value);
-                if (val < -128 || val > 127) {
-                    PyErr_SetString(PyExc_ValueError, "mismatch cost must fit in 8-bit signed integer");
-                    return -1;
-                }
-                mismatch = (sz_error_cost_t)val;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "open") == 0) {
-                if (nargs >= 3) {
-                    PyErr_SetString(PyExc_TypeError, "open specified twice");
-                    return -1;
-                }
-                if (!PyLong_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "open must be an integer");
-                    return -1;
-                }
-                long val = PyLong_AsLong(value);
-                if (val < -128 || val > 127) {
-                    PyErr_SetString(PyExc_ValueError, "open cost must fit in 8-bit signed integer");
-                    return -1;
-                }
-                open = (sz_error_cost_t)val;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "extend") == 0) {
-                if (nargs >= 4) {
-                    PyErr_SetString(PyExc_TypeError, "extend specified twice");
-                    return -1;
-                }
-                if (!PyLong_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "extend must be an integer");
-                    return -1;
-                }
-                long val = PyLong_AsLong(value);
-                if (val < -128 || val > 127) {
-                    PyErr_SetString(PyExc_ValueError, "extend cost must fit in 8-bit signed integer");
-                    return -1;
-                }
-                extend = (sz_error_cost_t)val;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "capabilities") == 0) {
-                if (nargs >= 5) {
-                    PyErr_SetString(PyExc_TypeError, "capabilities specified twice");
-                    return -1;
-                }
-                if (!PyTuple_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "capabilities must be a tuple of strings");
-                    return -1;
-                }
-                capabilities_tuple = value;
-            }
-            else {
-                PyErr_Format(PyExc_TypeError, "Got an unexpected keyword argument '%U'", key);
-                return -1;
-            }
-        }
+    // Validate range of values
+    if (match < -128 || match > 127) {
+        PyErr_SetString(PyExc_ValueError, "match cost must fit in 8-bit signed integer");
+        return -1;
+    }
+    if (mismatch < -128 || mismatch > 127) {
+        PyErr_SetString(PyExc_ValueError, "mismatch cost must fit in 8-bit signed integer");
+        return -1;
+    }
+    if (open < -128 || open > 127) {
+        PyErr_SetString(PyExc_ValueError, "open cost must fit in 8-bit signed integer");
+        return -1;
+    }
+    if (extend < -128 || extend > 127) {
+        PyErr_SetString(PyExc_ValueError, "extend cost must fit in 8-bit signed integer");
+        return -1;
     }
 
     // Parse capabilities if provided
@@ -472,53 +368,26 @@ static int LevenshteinDistances_init(LevenshteinDistances *self, PyObject *args,
         return -1;
     }
 
+    snprintf(self->description, sizeof(self->description), "%d,%d,%d,%d", match, mismatch, open, extend);
+    self->capabilities = capabilities;
     return 0;
 }
 
+static PyObject *LevenshteinDistances_repr(LevenshteinDistances *self) {
+    return PyUnicode_FromFormat("LevenshteinDistances(match,mismatch,open,extend=%s)", self->description);
+}
+
+static PyObject *LevenshteinDistances_get_capabilities(LevenshteinDistances *self, void *closure) {
+    return capabilities_to_tuple(self->capabilities);
+}
+
 static PyObject *LevenshteinDistances_call(LevenshteinDistances *self, PyObject *args, PyObject *kwargs) {
-    Py_ssize_t nargs = PyTuple_Size(args);
     PyObject *a_obj = NULL, *b_obj = NULL, *device_obj = NULL, *out_obj = NULL;
 
-    // Manual argument parsing for hot path
-    if (nargs < 2) {
-        PyErr_SetString(PyExc_TypeError, "LevenshteinDistances() requires at least 2 arguments");
+    static char *kwlist[] = {"a", "b", "device", "out", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|OO", kwlist, &a_obj, &b_obj, &device_obj, &out_obj)) {
         return NULL;
-    }
-
-    if (nargs > 4) {
-        PyErr_SetString(PyExc_TypeError, "LevenshteinDistances() takes at most 4 arguments");
-        return NULL;
-    }
-
-    a_obj = PyTuple_GET_ITEM(args, 0);
-    b_obj = PyTuple_GET_ITEM(args, 1);
-    if (nargs >= 3) device_obj = PyTuple_GET_ITEM(args, 2);
-    if (nargs >= 4) out_obj = PyTuple_GET_ITEM(args, 3);
-
-    // Parse keyword arguments
-    if (kwargs) {
-        Py_ssize_t pos = 0;
-        PyObject *key, *value;
-        while (PyDict_Next(kwargs, &pos, &key, &value)) {
-            if (PyUnicode_CompareWithASCIIString(key, "device") == 0) {
-                if (device_obj) {
-                    PyErr_SetString(PyExc_TypeError, "device specified twice");
-                    return NULL;
-                }
-                device_obj = value;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "out") == 0) {
-                if (out_obj) {
-                    PyErr_SetString(PyExc_TypeError, "out specified twice");
-                    return NULL;
-                }
-                out_obj = value;
-            }
-            else {
-                PyErr_Format(PyExc_TypeError, "Got an unexpected keyword argument '%U'", key);
-                return NULL;
-            }
-        }
     }
 
     DeviceScope *device_scope = NULL;
@@ -538,6 +407,9 @@ static PyObject *LevenshteinDistances_call(LevenshteinDistances *self, PyObject 
     sz_size_t kernel_results_stride = sizeof(sz_size_t);
     sz_status_t (*kernel_punned)(sz_levenshtein_distances_t, sz_device_scope_t, void *, void *, sz_size_t *,
                                  sz_size_t) = NULL;
+
+    // Try to swap allocators to unified memory for GPU compatibility
+    if (!try_swap_to_unified_allocator(a_obj) || !try_swap_to_unified_allocator(b_obj)) { return NULL; }
 
     // Handle 32-bit tape inputs
     sz_sequence_u32tape_t a_u32tape, b_u32tape;
@@ -643,7 +515,18 @@ static PyObject *LevenshteinDistances_call(LevenshteinDistances *self, PyObject 
         kernel_results, kernel_results_stride);
 
     if (status != sz_success_k) {
-        PyErr_SetString(PyExc_RuntimeError, "Levenshtein distance computation failed");
+        char const *error_msg;
+        switch (status) {
+        case sz_bad_alloc_k: error_msg = "Levenshtein failed: memory allocation failed"; break;
+        case sz_invalid_utf8_k: error_msg = "Levenshtein failed: invalid UTF-8 input"; break;
+        case sz_contains_duplicates_k: error_msg = "Levenshtein failed: contains duplicates"; break;
+        case sz_overflow_risk_k: error_msg = "Levenshtein failed: overflow risk"; break;
+        case sz_unexpected_dimensions_k: error_msg = "Levenshtein failed: input/output size mismatch"; break;
+        case sz_missing_gpu_k: error_msg = "Levenshtein failed: GPU support is missing in the library"; break;
+        case sz_status_unknown_k: error_msg = "Levenshtein failed: unknown error"; break;
+        default: error_msg = "Levenshtein failed: unexpected error"; break;
+        }
+        PyErr_Format(PyExc_RuntimeError, "%s (status code: %d)", error_msg, (int)status);
         goto cleanup;
     }
     return results_array;
@@ -673,6 +556,12 @@ static char const doc_LevenshteinDistances[] = //
     "  device (DeviceScope, optional): Device execution context.\n"
     "  out (array, optional): Output buffer for results.";
 
+static PyGetSetDef LevenshteinDistances_getsetters[] = {
+    {"__capabilities__", (getter)LevenshteinDistances_get_capabilities, NULL,
+     "Hardware capabilities used by this engine", NULL},
+    {NULL} /* Sentinel */
+};
+
 static PyTypeObject LevenshteinDistancesType = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "stringzillas.LevenshteinDistances",
     .tp_doc = doc_LevenshteinDistances,
@@ -682,6 +571,8 @@ static PyTypeObject LevenshteinDistancesType = {
     .tp_init = (initproc)LevenshteinDistances_init,
     .tp_dealloc = (destructor)LevenshteinDistances_dealloc,
     .tp_call = (ternaryfunc)LevenshteinDistances_call,
+    .tp_repr = (reprfunc)LevenshteinDistances_repr,
+    .tp_getset = LevenshteinDistances_getsetters,
 };
 
 #pragma endregion
@@ -691,11 +582,17 @@ static PyTypeObject LevenshteinDistancesType = {
 typedef struct {
     PyObject ob_base;
     sz_levenshtein_distances_utf8_t handle;
+    char description[32];
+    sz_capability_t capabilities;
 } LevenshteinDistancesUTF8;
 
 static PyObject *LevenshteinDistancesUTF8_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
     LevenshteinDistancesUTF8 *self = (LevenshteinDistancesUTF8 *)type->tp_alloc(type, 0);
-    if (self != NULL) { self->handle = NULL; }
+    if (self != NULL) {
+        self->handle = NULL;
+        self->description[0] = '\0';
+        self->capabilities = 0;
+    }
     return (PyObject *)self;
 }
 
@@ -705,139 +602,33 @@ static void LevenshteinDistancesUTF8_dealloc(LevenshteinDistancesUTF8 *self) {
 }
 
 static int LevenshteinDistancesUTF8_init(LevenshteinDistancesUTF8 *self, PyObject *args, PyObject *kwargs) {
-    Py_ssize_t nargs = PyTuple_Size(args);
-    sz_error_cost_t match = 0, mismatch = 1, gap = 1;
+    int match = 0, mismatch = 1, open = 1, extend = 1;
     PyObject *capabilities_tuple = NULL;
     sz_capability_t capabilities = default_hardware_capabilities;
 
-    // Manual argument parsing - fast path for positional args
-    if (nargs >= 1) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 0);
-        if (PyLong_Check(obj)) {
-            long val = PyLong_AsLong(obj);
-            if (val < -128 || val > 127) {
-                PyErr_SetString(PyExc_ValueError, "match cost must fit in 8-bit signed integer");
-                return -1;
-            }
-            match = (sz_error_cost_t)val;
-        }
-        else {
-            PyErr_SetString(PyExc_TypeError, "match cost must be an integer");
-            return -1;
-        }
-    }
-    if (nargs >= 2) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 1);
-        if (PyLong_Check(obj)) {
-            long val = PyLong_AsLong(obj);
-            if (val < -128 || val > 127) {
-                PyErr_SetString(PyExc_ValueError, "mismatch cost must fit in 8-bit signed integer");
-                return -1;
-            }
-            mismatch = (sz_error_cost_t)val;
-        }
-        else {
-            PyErr_SetString(PyExc_TypeError, "mismatch cost must be an integer");
-            return -1;
-        }
-    }
-    if (nargs >= 3) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 2);
-        if (PyLong_Check(obj)) {
-            long val = PyLong_AsLong(obj);
-            if (val < -128 || val > 127) {
-                PyErr_SetString(PyExc_ValueError, "gap cost must fit in 8-bit signed integer");
-                return -1;
-            }
-            gap = (sz_error_cost_t)val;
-        }
-        else {
-            PyErr_SetString(PyExc_TypeError, "gap cost must be an integer");
-            return -1;
-        }
-    }
-    if (nargs >= 4) {
-        PyObject *obj = PyTuple_GET_ITEM(args, 3);
-        if (PyTuple_Check(obj)) { capabilities_tuple = obj; }
-        else {
-            PyErr_SetString(PyExc_TypeError, "capabilities must be a tuple of strings");
-            return -1;
-        }
-    }
-    if (nargs > 4) {
-        PyErr_SetString(PyExc_TypeError, "LevenshteinDistancesUTF8() takes at most 4 arguments");
+    static char *kwlist[] = {"match", "mismatch", "open", "extend", "capabilities", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|iiiiO", kwlist, &match, &mismatch, &open, &extend,
+                                     &capabilities_tuple)) {
         return -1;
     }
 
-    // Parse keyword arguments
-    if (kwargs) {
-        Py_ssize_t pos = 0;
-        PyObject *key, *value;
-        while (PyDict_Next(kwargs, &pos, &key, &value)) {
-            if (PyUnicode_CompareWithASCIIString(key, "match") == 0) {
-                if (nargs >= 1) {
-                    PyErr_SetString(PyExc_TypeError, "match specified twice");
-                    return -1;
-                }
-                if (!PyLong_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "match must be an integer");
-                    return -1;
-                }
-                long val = PyLong_AsLong(value);
-                if (val < -128 || val > 127) {
-                    PyErr_SetString(PyExc_ValueError, "match cost must fit in 8-bit signed integer");
-                    return -1;
-                }
-                match = (sz_error_cost_t)val;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "mismatch") == 0) {
-                if (nargs >= 2) {
-                    PyErr_SetString(PyExc_TypeError, "mismatch specified twice");
-                    return -1;
-                }
-                if (!PyLong_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "mismatch must be an integer");
-                    return -1;
-                }
-                long val = PyLong_AsLong(value);
-                if (val < -128 || val > 127) {
-                    PyErr_SetString(PyExc_ValueError, "mismatch cost must fit in 8-bit signed integer");
-                    return -1;
-                }
-                mismatch = (sz_error_cost_t)val;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "gap") == 0) {
-                if (nargs >= 3) {
-                    PyErr_SetString(PyExc_TypeError, "gap specified twice");
-                    return -1;
-                }
-                if (!PyLong_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "gap must be an integer");
-                    return -1;
-                }
-                long val = PyLong_AsLong(value);
-                if (val < -128 || val > 127) {
-                    PyErr_SetString(PyExc_ValueError, "gap cost must fit in 8-bit signed integer");
-                    return -1;
-                }
-                gap = (sz_error_cost_t)val;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "capabilities") == 0) {
-                if (nargs >= 4) {
-                    PyErr_SetString(PyExc_TypeError, "capabilities specified twice");
-                    return -1;
-                }
-                if (!PyTuple_Check(value)) {
-                    PyErr_SetString(PyExc_TypeError, "capabilities must be a tuple of strings");
-                    return -1;
-                }
-                capabilities_tuple = value;
-            }
-            else {
-                PyErr_Format(PyExc_TypeError, "Got an unexpected keyword argument '%U'", key);
-                return -1;
-            }
-        }
+    // Validate range of values
+    if (match < -128 || match > 127) {
+        PyErr_SetString(PyExc_ValueError, "match cost must fit in 8-bit signed integer");
+        return -1;
+    }
+    if (mismatch < -128 || mismatch > 127) {
+        PyErr_SetString(PyExc_ValueError, "mismatch cost must fit in 8-bit signed integer");
+        return -1;
+    }
+    if (open < -128 || open > 127) {
+        PyErr_SetString(PyExc_ValueError, "open cost must fit in 8-bit signed integer");
+        return -1;
+    }
+    if (extend < -128 || extend > 127) {
+        PyErr_SetString(PyExc_ValueError, "extend cost must fit in 8-bit signed integer");
+        return -1;
     }
 
     // Parse capabilities if provided
@@ -845,59 +636,33 @@ static int LevenshteinDistancesUTF8_init(LevenshteinDistancesUTF8 *self, PyObjec
         if (parse_and_intersect_capabilities(capabilities_tuple, &capabilities) != 0) { return -1; }
     }
 
-    sz_status_t status = sz_levenshtein_distances_utf8_init(match, mismatch, gap, NULL, capabilities, &self->handle);
+    sz_status_t status =
+        sz_levenshtein_distances_utf8_init(match, mismatch, open, extend, NULL, capabilities, &self->handle);
 
     if (status != sz_success_k) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to initialize UTF-8 Levenshtein distances engine");
         return -1;
     }
+    snprintf(self->description, sizeof(self->description), "%d,%d,%d,%d", match, mismatch, open, extend);
+    self->capabilities = capabilities;
     return 0;
 }
 
+static PyObject *LevenshteinDistancesUTF8_repr(LevenshteinDistancesUTF8 *self) {
+    return PyUnicode_FromFormat("LevenshteinDistancesUTF8(match,mismatch,open,extend=%s)", self->description);
+}
+
+static PyObject *LevenshteinDistancesUTF8_get_capabilities(LevenshteinDistancesUTF8 *self, void *closure) {
+    return capabilities_to_tuple(self->capabilities);
+}
+
 static PyObject *LevenshteinDistancesUTF8_call(LevenshteinDistancesUTF8 *self, PyObject *args, PyObject *kwargs) {
-    Py_ssize_t nargs = PyTuple_Size(args);
     PyObject *a_obj = NULL, *b_obj = NULL, *device_obj = NULL, *out_obj = NULL;
 
-    // Manual argument parsing for hot path
-    if (nargs < 2) {
-        PyErr_SetString(PyExc_TypeError, "LevenshteinDistancesUTF8() requires at least 2 arguments");
+    static char *kwlist[] = {"a", "b", "device", "out", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|OO", kwlist, &a_obj, &b_obj, &device_obj, &out_obj)) {
         return NULL;
-    }
-
-    if (nargs > 4) {
-        PyErr_SetString(PyExc_TypeError, "LevenshteinDistancesUTF8() takes at most 4 arguments");
-        return NULL;
-    }
-
-    a_obj = PyTuple_GET_ITEM(args, 0);
-    b_obj = PyTuple_GET_ITEM(args, 1);
-    if (nargs >= 3) device_obj = PyTuple_GET_ITEM(args, 2);
-    if (nargs >= 4) out_obj = PyTuple_GET_ITEM(args, 3);
-
-    // Parse keyword arguments
-    if (kwargs) {
-        Py_ssize_t pos = 0;
-        PyObject *key, *value;
-        while (PyDict_Next(kwargs, &pos, &key, &value)) {
-            if (PyUnicode_CompareWithASCIIString(key, "device") == 0) {
-                if (device_obj) {
-                    PyErr_SetString(PyExc_TypeError, "device specified twice");
-                    return NULL;
-                }
-                device_obj = value;
-            }
-            else if (PyUnicode_CompareWithASCIIString(key, "out") == 0) {
-                if (out_obj) {
-                    PyErr_SetString(PyExc_TypeError, "out specified twice");
-                    return NULL;
-                }
-                out_obj = value;
-            }
-            else {
-                PyErr_Format(PyExc_TypeError, "Got an unexpected keyword argument '%U'", key);
-                return NULL;
-            }
-        }
     }
 
     DeviceScope *device_scope = NULL;
@@ -917,6 +682,9 @@ static PyObject *LevenshteinDistancesUTF8_call(LevenshteinDistancesUTF8 *self, P
     sz_size_t kernel_results_stride = sizeof(sz_size_t);
     sz_status_t (*kernel_punned)(sz_levenshtein_distances_t, sz_device_scope_t, void *, void *, sz_size_t *,
                                  sz_size_t) = NULL;
+
+    // Try to swap allocators to unified memory for GPU compatibility
+    if (!try_swap_to_unified_allocator(a_obj) || !try_swap_to_unified_allocator(b_obj)) { return NULL; }
 
     // Handle 32-bit tape inputs
     sz_sequence_u32tape_t a_u32tape, b_u32tape;
@@ -1022,7 +790,18 @@ static PyObject *LevenshteinDistancesUTF8_call(LevenshteinDistancesUTF8 *self, P
         kernel_results, kernel_results_stride);
 
     if (status != sz_success_k) {
-        PyErr_SetString(PyExc_RuntimeError, "Levenshtein distance computation failed");
+        char const *error_msg;
+        switch (status) {
+        case sz_bad_alloc_k: error_msg = "Levenshtein failed: memory allocation failed"; break;
+        case sz_invalid_utf8_k: error_msg = "Levenshtein failed: invalid UTF-8 input"; break;
+        case sz_contains_duplicates_k: error_msg = "Levenshtein failed: contains duplicates"; break;
+        case sz_overflow_risk_k: error_msg = "Levenshtein failed: overflow risk"; break;
+        case sz_unexpected_dimensions_k: error_msg = "Levenshtein failed: input/output size mismatch"; break;
+        case sz_missing_gpu_k: error_msg = "Levenshtein failed: GPU support is missing in the library"; break;
+        case sz_status_unknown_k: error_msg = "Levenshtein failed: unknown error"; break;
+        default: error_msg = "Levenshtein failed: unexpected error"; break;
+        }
+        PyErr_Format(PyExc_RuntimeError, "%s (status code: %d)", error_msg, (int)status);
         goto cleanup;
     }
     return results_array;
@@ -1033,15 +812,16 @@ cleanup:
 }
 
 static char const doc_LevenshteinDistancesUTF8[] = //
-    "LevenshteinDistancesUTF8(match=0, mismatch=1, gap=1, capabilities=None)\n"
+    "LevenshteinDistancesUTF8(match=0, mismatch=1, open=1, extend=1, capabilities=None)\n"
     "\n"
-    "Vectorized UTF-8 Levenshtein distance calculator.\n"
+    "Vectorized UTF-8 Levenshtein distance calculator with affine gap penalties.\n"
     "Computes edit distances between pairs of UTF-8 encoded strings.\n"
     "\n"
     "Args:\n"
     "  match (int): Cost of matching characters (default 0).\n"
     "  mismatch (int): Cost of mismatched characters (default 1).\n"
-    "  gap (int): Cost of gap insertion (default 1).\n"
+    "  open (int): Cost of opening a gap (default 1).\n"
+    "  extend (int): Cost of extending a gap (default 1).\n"
     "  capabilities (Tuple[str], optional): Hardware capabilities to use.\n"
     "                                       Will be intersected with detected capabilities.\n"
     "                                       Examples: ('serial',), ('haswell', 'parallel')\n"
@@ -1052,6 +832,12 @@ static char const doc_LevenshteinDistancesUTF8[] = //
     "  device (DeviceScope, optional): Device execution context.\n"
     "  out (array, optional): Output buffer for results.";
 
+static PyGetSetDef LevenshteinDistancesUTF8_getsetters[] = {
+    {"__capabilities__", (getter)LevenshteinDistancesUTF8_get_capabilities, NULL,
+     "Hardware capabilities used by this engine", NULL},
+    {NULL} /* Sentinel */
+};
+
 static PyTypeObject LevenshteinDistancesUTF8Type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "stringzillas.LevenshteinDistancesUTF8",
     .tp_doc = doc_LevenshteinDistancesUTF8,
@@ -1061,6 +847,854 @@ static PyTypeObject LevenshteinDistancesUTF8Type = {
     .tp_init = (initproc)LevenshteinDistancesUTF8_init,
     .tp_dealloc = (destructor)LevenshteinDistancesUTF8_dealloc,
     .tp_call = (ternaryfunc)LevenshteinDistancesUTF8_call,
+    .tp_repr = (reprfunc)LevenshteinDistancesUTF8_repr,
+    .tp_getset = LevenshteinDistancesUTF8_getsetters,
+};
+
+#pragma endregion
+
+#pragma region NeedlemanWunsch
+
+/**
+ *  @brief  Needleman-Wunsch global alignment scoring engine.
+ */
+typedef struct {
+    PyObject ob_base;
+    sz_needleman_wunsch_scores_t handle;
+    char description[32];
+    sz_capability_t capabilities;
+} NeedlemanWunsch;
+
+static void NeedlemanWunsch_dealloc(NeedlemanWunsch *self) {
+    if (self->handle) {
+        sz_needleman_wunsch_scores_free(self->handle);
+        self->handle = NULL;
+    }
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static PyObject *NeedlemanWunsch_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+    NeedlemanWunsch *self = (NeedlemanWunsch *)type->tp_alloc(type, 0);
+    if (self != NULL) {
+        self->handle = NULL;
+        self->description[0] = '\0';
+        self->capabilities = 0;
+    }
+    return (PyObject *)self;
+}
+
+static int NeedlemanWunsch_init(NeedlemanWunsch *self, PyObject *args, PyObject *kwargs) {
+    PyObject *substitution_matrix_obj = NULL;
+    sz_error_cost_t open = -1, extend = -1;
+    PyObject *capabilities_tuple = NULL;
+    sz_capability_t capabilities = default_hardware_capabilities;
+
+    // Parse arguments: substitution_matrix, open, extend, capabilities
+    static char *kwlist[] = {"substitution_matrix", "open", "extend", "capabilities", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|iiO", kwlist, &substitution_matrix_obj, &open, &extend,
+                                     &capabilities_tuple)) {
+        return -1;
+    }
+
+    // Validate substitution matrix (should be a 256x256 numpy array)
+    if (!numpy_available || !PyArray_Check(substitution_matrix_obj)) {
+        PyErr_SetString(PyExc_TypeError, "substitution_matrix must be a NumPy array");
+        return -1;
+    }
+
+    PyArrayObject *subs_array = (PyArrayObject *)substitution_matrix_obj;
+    if (PyArray_NDIM(subs_array) != 2 || PyArray_DIM(subs_array, 0) != 256 || PyArray_DIM(subs_array, 1) != 256) {
+        PyErr_SetString(PyExc_ValueError, "substitution_matrix must be a 256x256 array");
+        return -1;
+    }
+
+    if (PyArray_TYPE(subs_array) != NPY_INT8) {
+        PyErr_SetString(PyExc_TypeError, "substitution_matrix must have int8 dtype");
+        return -1;
+    }
+
+    // Parse capabilities if provided
+    if (capabilities_tuple) {
+        if (parse_and_intersect_capabilities(capabilities_tuple, &capabilities) != 0) { return -1; }
+    }
+
+    // Initialize the engine
+    sz_error_cost_t *subs_data = (sz_error_cost_t *)PyArray_DATA(subs_array);
+
+    // Create a simple checksum of the substitution matrix for the description
+    uint32_t subs_checksum = 0;
+    for (int i = 0; i < 256; i += 16) {                    // Sample every 16th element
+        subs_checksum += (uint32_t)subs_data[i * 256 + i]; // Diagonal elements
+    }
+
+    sz_status_t status = sz_needleman_wunsch_scores_init(subs_data, open, extend, NULL, capabilities, &self->handle);
+
+    if (status != sz_success_k) {
+        char const *error_msg;
+        switch (status) {
+        case sz_bad_alloc_k: error_msg = "NeedlemanWunsch failed: memory allocation failed"; break;
+        case sz_invalid_utf8_k: error_msg = "NeedlemanWunsch failed: invalid UTF-8 input"; break;
+        case sz_contains_duplicates_k: error_msg = "NeedlemanWunsch failed: contains duplicates"; break;
+        case sz_overflow_risk_k: error_msg = "NeedlemanWunsch failed: overflow risk"; break;
+        case sz_unexpected_dimensions_k: error_msg = "NeedlemanWunsch failed: input/output size mismatch"; break;
+        case sz_missing_gpu_k: error_msg = "NeedlemanWunsch failed: GPU support is missing in the library"; break;
+        case sz_status_unknown_k: error_msg = "NeedlemanWunsch failed: unknown error"; break;
+        default: error_msg = "NeedlemanWunsch failed: unexpected error"; break;
+        }
+        PyErr_Format(PyExc_RuntimeError, "%s (status code: %d)", error_msg, (int)status);
+        return -1;
+    }
+
+    snprintf(self->description, sizeof(self->description), "%X,%d,%d", subs_checksum & 0xFFFF, open, extend);
+    self->capabilities = capabilities;
+    return 0;
+}
+
+static PyObject *NeedlemanWunsch_repr(NeedlemanWunsch *self) {
+    return PyUnicode_FromFormat("NeedlemanWunsch(subs_checksum,open,extend=%s)", self->description);
+}
+
+static PyObject *NeedlemanWunsch_get_capabilities(NeedlemanWunsch *self, void *closure) {
+    return capabilities_to_tuple(self->capabilities);
+}
+
+static PyObject *NeedlemanWunsch_call(NeedlemanWunsch *self, PyObject *args, PyObject *kwargs) {
+    PyObject *a_obj = NULL, *b_obj = NULL, *device_obj = NULL, *out_obj = NULL;
+
+    static char *kwlist[] = {"a", "b", "device", "out", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|OO", kwlist, &a_obj, &b_obj, &device_obj, &out_obj)) {
+        return NULL;
+    }
+
+    // Get device handle
+    sz_device_scope_t device_handle = default_device_scope;
+    if (device_obj && device_obj != Py_None) {
+        if (!PyObject_IsInstance(device_obj, (PyObject *)&DeviceScopeType)) {
+            PyErr_SetString(PyExc_TypeError, "device must be a DeviceScope instance");
+            return NULL;
+        }
+        device_handle = ((DeviceScope *)device_obj)->handle;
+    }
+
+    sz_size_t kernel_input_size = 0;
+    void const *kernel_a_texts_punned = NULL;
+    void const *kernel_b_texts_punned = NULL;
+    sz_status_t (*kernel_punned)(sz_needleman_wunsch_scores_t, sz_device_scope_t, void const *, void const *,
+                                 sz_ssize_t *, sz_size_t) = NULL;
+    // Try to swap allocators to unified memory for GPU compatibility
+    if (!try_swap_to_unified_allocator(a_obj) || !try_swap_to_unified_allocator(b_obj)) { return NULL; }
+
+    // Handle 32-bit tape inputs
+    sz_sequence_u32tape_t a_u32tape, b_u32tape;
+    sz_bool_t a_is_u32tape = sz_py_export_strings_as_u32tape( //
+        a_obj, &a_u32tape.data, &a_u32tape.offsets, &a_u32tape.count);
+    sz_bool_t b_is_u32tape = sz_py_export_strings_as_u32tape( //
+        b_obj, &b_u32tape.data, &b_u32tape.offsets, &b_u32tape.count);
+    if (a_is_u32tape && b_is_u32tape) {
+        if (a_u32tape.count != b_u32tape.count) {
+            PyErr_SetString(PyExc_ValueError, "Input sequences must have the same length");
+            return NULL;
+        }
+        kernel_input_size = a_u32tape.count;
+        kernel_punned = sz_needleman_wunsch_scores_u32tape;
+        kernel_a_texts_punned = &a_u32tape;
+        kernel_b_texts_punned = &b_u32tape;
+    }
+
+    // Handle 64-bit tape inputs
+    sz_sequence_u64tape_t a_u64tape, b_u64tape;
+    sz_bool_t a_is_u64tape = !a_is_u32tape && sz_py_export_strings_as_u64tape( //
+                                                  a_obj, &a_u64tape.data, &a_u64tape.offsets, &a_u64tape.count);
+    sz_bool_t b_is_u64tape = !b_is_u32tape && sz_py_export_strings_as_u64tape( //
+                                                  b_obj, &b_u64tape.data, &b_u64tape.offsets, &b_u64tape.count);
+    if (a_is_u64tape && b_is_u64tape) {
+        if (a_u64tape.count != b_u64tape.count) {
+            PyErr_SetString(PyExc_ValueError, "Input sequences must have the same length");
+            return NULL;
+        }
+        kernel_input_size = a_u64tape.count;
+        kernel_punned = sz_needleman_wunsch_scores_u64tape;
+        kernel_a_texts_punned = &a_u64tape;
+        kernel_b_texts_punned = &b_u64tape;
+    }
+
+    // Handle sequence inputs
+    sz_sequence_t a_seq, b_seq;
+    sz_bool_t a_is_sequence = !a_is_u32tape && !a_is_u64tape && sz_py_export_strings_as_sequence(a_obj, &a_seq);
+    sz_bool_t b_is_sequence = !b_is_u32tape && !b_is_u64tape && sz_py_export_strings_as_sequence(b_obj, &b_seq);
+    if (a_is_sequence && b_is_sequence) {
+        if (a_seq.count != b_seq.count) {
+            PyErr_SetString(PyExc_ValueError, "Input sequences must have the same length");
+            return NULL;
+        }
+        kernel_input_size = a_seq.count;
+        kernel_punned = sz_needleman_wunsch_scores_sequence;
+        kernel_a_texts_punned = &a_seq;
+        kernel_b_texts_punned = &b_seq;
+    }
+
+    // If no valid input types were found, raise an error
+    if (!kernel_punned) {
+        PyErr_Format(PyExc_TypeError,
+                     "Unsupported input types for NeedlemanWunsch. "
+                     "u32tape: a=%d b=%d, u64tape: a=%d b=%d, seq: a=%d b=%d",
+                     a_is_u32tape, b_is_u32tape, a_is_u64tape, b_is_u64tape, a_is_sequence, b_is_sequence);
+        return NULL;
+    }
+
+    // Make sure the `out` argument is valid NumPy array and extract results info
+    PyObject *results_array = NULL;
+    sz_ssize_t *kernel_results = NULL;
+    sz_size_t kernel_results_stride = sizeof(sz_ssize_t);
+
+    if (!out_obj || out_obj == Py_None) {
+        // Create a new NumPy array for results (signed integers for scores)
+        npy_intp numpy_size = kernel_input_size;
+        results_array = PyArray_SimpleNew(1, &numpy_size, NPY_INT64);
+        if (!results_array) {
+            PyErr_SetString(PyExc_MemoryError, "Failed to allocate results array");
+            goto cleanup;
+        }
+        kernel_results = (sz_ssize_t *)PyArray_DATA((PyArrayObject *)results_array);
+        kernel_results_stride = PyArray_STRIDE((PyArrayObject *)results_array, 0);
+    }
+    else {
+        // Use provided array
+        if (!PyArray_Check(out_obj)) {
+            PyErr_SetString(PyExc_TypeError, "out must be a NumPy array");
+            goto cleanup;
+        }
+        PyArrayObject *array = (PyArrayObject *)out_obj;
+        if (PyArray_NDIM(array) != 1) {
+            PyErr_SetString(PyExc_ValueError, "out array must be 1-dimensional");
+            goto cleanup;
+        }
+        if (PyArray_SIZE(array) < (npy_intp)kernel_input_size) {
+            PyErr_SetString(PyExc_ValueError, "out array is too small for results");
+            goto cleanup;
+        }
+        if (PyArray_TYPE(array) != NPY_INT64) {
+            PyErr_SetString(PyExc_TypeError, "out array must have int64 dtype");
+            goto cleanup;
+        }
+        kernel_results = (sz_ssize_t *)PyArray_DATA(array);
+        kernel_results_stride = PyArray_STRIDE(array, 0);
+        results_array = out_obj;
+        Py_INCREF(results_array);
+    }
+
+    sz_status_t status = kernel_punned(               //
+        self->handle, device_handle,                  //
+        kernel_a_texts_punned, kernel_b_texts_punned, //
+        kernel_results, kernel_results_stride);
+
+    if (status != sz_success_k) {
+        char const *error_msg;
+        switch (status) {
+        case sz_bad_alloc_k: error_msg = "NeedlemanWunsch failed: memory allocation failed"; break;
+        case sz_invalid_utf8_k: error_msg = "NeedlemanWunsch failed: invalid UTF-8 input"; break;
+        case sz_contains_duplicates_k: error_msg = "NeedlemanWunsch failed: contains duplicates"; break;
+        case sz_overflow_risk_k: error_msg = "NeedlemanWunsch failed: overflow risk"; break;
+        case sz_unexpected_dimensions_k: error_msg = "NeedlemanWunsch failed: input/output size mismatch"; break;
+        case sz_missing_gpu_k: error_msg = "NeedlemanWunsch failed: GPU support is missing in the library"; break;
+        case sz_status_unknown_k: error_msg = "NeedlemanWunsch failed: unknown error"; break;
+        default: error_msg = "NeedlemanWunsch failed: unexpected error"; break;
+        }
+        PyErr_Format(PyExc_RuntimeError, "%s (status code: %d)", error_msg, (int)status);
+        goto cleanup;
+    }
+    return results_array;
+
+cleanup:
+    Py_XDECREF(results_array);
+    return NULL;
+}
+
+static char const doc_NeedlemanWunsch[] = //
+    "NeedlemanWunsch(substitution_matrix, open=-1, extend=-1, capabilities=None)\n"
+    "\n"
+    "Needleman-Wunsch global alignment scoring engine.\n"
+    "\n"
+    "Args:\n"
+    "  substitution_matrix (np.ndarray): 256x256 int8 substitution matrix.\n"
+    "  open (int): Cost for opening a gap (default: -1).\n"
+    "  extend (int): Cost for extending a gap (default: -1).\n"
+    "  capabilities (Tuple[str], optional): Hardware capabilities to use.\n"
+    "                                       Will be intersected with detected capabilities.\n"
+    "                                       Examples: ('serial',), ('haswell', 'parallel')\n"
+    "\n"
+    "Call with:\n"
+    "  a (sequence): First sequence of strings.\n"
+    "  b (sequence): Second sequence of strings.\n"
+    "  device (DeviceScope, optional): Device execution context.\n"
+    "  out (array, optional): Output buffer for results.";
+
+static PyTypeObject NeedlemanWunschType = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "stringzillas.NeedlemanWunsch",
+    .tp_doc = doc_NeedlemanWunsch,
+    .tp_basicsize = sizeof(NeedlemanWunsch),
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_new = NeedlemanWunsch_new,
+    .tp_init = (initproc)NeedlemanWunsch_init,
+    .tp_dealloc = (destructor)NeedlemanWunsch_dealloc,
+    .tp_call = (ternaryfunc)NeedlemanWunsch_call,
+};
+
+#pragma endregion
+
+#pragma region SmithWaterman
+
+/**
+ *  @brief  Smith-Waterman local alignment scoring engine.
+ */
+typedef struct {
+    PyObject ob_base;
+    sz_smith_waterman_scores_t handle;
+} SmithWaterman;
+
+static void SmithWaterman_dealloc(SmithWaterman *self) {
+    if (self->handle) {
+        sz_smith_waterman_scores_free(self->handle);
+        self->handle = NULL;
+    }
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static PyObject *SmithWaterman_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+    SmithWaterman *self = (SmithWaterman *)type->tp_alloc(type, 0);
+    if (self != NULL) { self->handle = NULL; }
+    return (PyObject *)self;
+}
+
+static int SmithWaterman_init(SmithWaterman *self, PyObject *args, PyObject *kwargs) {
+    PyObject *substitution_matrix_obj = NULL;
+    sz_error_cost_t open = -1, extend = -1;
+    PyObject *capabilities_tuple = NULL;
+    sz_capability_t capabilities = default_hardware_capabilities;
+
+    // Parse arguments: substitution_matrix, open, extend, capabilities
+    static char *kwlist[] = {"substitution_matrix", "open", "extend", "capabilities", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|iiO", kwlist, &substitution_matrix_obj, &open, &extend,
+                                     &capabilities_tuple)) {
+        return -1;
+    }
+
+    // Validate substitution matrix (should be a 256x256 numpy array)
+    if (!numpy_available || !PyArray_Check(substitution_matrix_obj)) {
+        PyErr_SetString(PyExc_TypeError, "substitution_matrix must be a NumPy array");
+        return -1;
+    }
+
+    PyArrayObject *subs_array = (PyArrayObject *)substitution_matrix_obj;
+    if (PyArray_NDIM(subs_array) != 2 || PyArray_DIM(subs_array, 0) != 256 || PyArray_DIM(subs_array, 1) != 256) {
+        PyErr_SetString(PyExc_ValueError, "substitution_matrix must be a 256x256 array");
+        return -1;
+    }
+
+    if (PyArray_TYPE(subs_array) != NPY_INT8) {
+        PyErr_SetString(PyExc_TypeError, "substitution_matrix must have int8 dtype");
+        return -1;
+    }
+
+    // Parse capabilities if provided
+    if (capabilities_tuple) {
+        if (parse_and_intersect_capabilities(capabilities_tuple, &capabilities) != 0) { return -1; }
+    }
+
+    // Initialize the engine
+    sz_error_cost_t *subs_data = (sz_error_cost_t *)PyArray_DATA(subs_array);
+    sz_status_t status = sz_smith_waterman_scores_init(subs_data, open, extend, NULL, capabilities, &self->handle);
+
+    if (status != sz_success_k) {
+        char const *error_msg;
+        switch (status) {
+        case sz_bad_alloc_k: error_msg = "SmithWaterman failed: memory allocation failed"; break;
+        case sz_invalid_utf8_k: error_msg = "SmithWaterman failed: invalid UTF-8 input"; break;
+        case sz_contains_duplicates_k: error_msg = "SmithWaterman failed: contains duplicates"; break;
+        case sz_overflow_risk_k: error_msg = "SmithWaterman failed: overflow risk"; break;
+        case sz_unexpected_dimensions_k: error_msg = "SmithWaterman failed: input/output size mismatch"; break;
+        case sz_missing_gpu_k: error_msg = "SmithWaterman failed: GPU support is missing in the library"; break;
+        case sz_status_unknown_k: error_msg = "SmithWaterman failed: unknown error"; break;
+        default: error_msg = "SmithWaterman failed: unexpected error"; break;
+        }
+        PyErr_Format(PyExc_RuntimeError, "%s (status code: %d)", error_msg, (int)status);
+        return -1;
+    }
+
+    return 0;
+}
+
+static PyObject *SmithWaterman_call(SmithWaterman *self, PyObject *args, PyObject *kwargs) {
+    PyObject *a_obj = NULL, *b_obj = NULL, *device_obj = NULL, *out_obj = NULL;
+
+    static char *kwlist[] = {"a", "b", "device", "out", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO|OO", kwlist, &a_obj, &b_obj, &device_obj, &out_obj)) {
+        return NULL;
+    }
+
+    // Get device handle
+    sz_device_scope_t device_handle = default_device_scope;
+    if (device_obj && device_obj != Py_None) {
+        if (!PyObject_IsInstance(device_obj, (PyObject *)&DeviceScopeType)) {
+            PyErr_SetString(PyExc_TypeError, "device must be a DeviceScope instance");
+            return NULL;
+        }
+        device_handle = ((DeviceScope *)device_obj)->handle;
+    }
+
+    sz_size_t kernel_input_size = 0;
+    void const *kernel_a_texts_punned = NULL;
+    void const *kernel_b_texts_punned = NULL;
+    sz_status_t (*kernel_punned)(sz_smith_waterman_scores_t, sz_device_scope_t, void const *, void const *,
+                                 sz_ssize_t *, sz_size_t) = NULL;
+    // Try to swap allocators to unified memory for GPU compatibility
+    if (!try_swap_to_unified_allocator(a_obj) || !try_swap_to_unified_allocator(b_obj)) { return NULL; }
+
+    // Handle 32-bit tape inputs
+    sz_sequence_u32tape_t a_u32tape, b_u32tape;
+    sz_bool_t a_is_u32tape = sz_py_export_strings_as_u32tape( //
+        a_obj, &a_u32tape.data, &a_u32tape.offsets, &a_u32tape.count);
+    sz_bool_t b_is_u32tape = sz_py_export_strings_as_u32tape( //
+        b_obj, &b_u32tape.data, &b_u32tape.offsets, &b_u32tape.count);
+    if (a_is_u32tape && b_is_u32tape) {
+        if (a_u32tape.count != b_u32tape.count) {
+            PyErr_SetString(PyExc_ValueError, "Input sequences must have the same length");
+            return NULL;
+        }
+        kernel_input_size = a_u32tape.count;
+        kernel_punned = sz_smith_waterman_scores_u32tape;
+        kernel_a_texts_punned = &a_u32tape;
+        kernel_b_texts_punned = &b_u32tape;
+    }
+
+    // Handle 64-bit tape inputs
+    sz_sequence_u64tape_t a_u64tape, b_u64tape;
+    sz_bool_t a_is_u64tape = !a_is_u32tape && sz_py_export_strings_as_u64tape( //
+                                                  a_obj, &a_u64tape.data, &a_u64tape.offsets, &a_u64tape.count);
+    sz_bool_t b_is_u64tape = !b_is_u32tape && sz_py_export_strings_as_u64tape( //
+                                                  b_obj, &b_u64tape.data, &b_u64tape.offsets, &b_u64tape.count);
+    if (a_is_u64tape && b_is_u64tape) {
+        if (a_u64tape.count != b_u64tape.count) {
+            PyErr_SetString(PyExc_ValueError, "Input sequences must have the same length");
+            return NULL;
+        }
+        kernel_input_size = a_u64tape.count;
+        kernel_punned = sz_smith_waterman_scores_u64tape;
+        kernel_a_texts_punned = &a_u64tape;
+        kernel_b_texts_punned = &b_u64tape;
+    }
+
+    // Handle sequence inputs
+    sz_sequence_t a_seq, b_seq;
+    sz_bool_t a_is_sequence = !a_is_u32tape && !a_is_u64tape && sz_py_export_strings_as_sequence(a_obj, &a_seq);
+    sz_bool_t b_is_sequence = !b_is_u32tape && !b_is_u64tape && sz_py_export_strings_as_sequence(b_obj, &b_seq);
+    if (a_is_sequence && b_is_sequence) {
+        if (a_seq.count != b_seq.count) {
+            PyErr_SetString(PyExc_ValueError, "Input sequences must have the same length");
+            return NULL;
+        }
+        kernel_input_size = a_seq.count;
+        kernel_punned = sz_smith_waterman_scores_sequence;
+        kernel_a_texts_punned = &a_seq;
+        kernel_b_texts_punned = &b_seq;
+    }
+
+    // If no valid input types were found, raise an error
+    if (!kernel_punned) {
+        PyErr_Format(PyExc_TypeError,
+                     "Unsupported input types for SmithWaterman. "
+                     "u32tape: a=%d b=%d, u64tape: a=%d b=%d, seq: a=%d b=%d",
+                     a_is_u32tape, b_is_u32tape, a_is_u64tape, b_is_u64tape, a_is_sequence, b_is_sequence);
+        return NULL;
+    }
+
+    // Make sure the `out` argument is valid NumPy array and extract results info
+    PyObject *results_array = NULL;
+    sz_ssize_t *kernel_results = NULL;
+    sz_size_t kernel_results_stride = sizeof(sz_ssize_t);
+
+    if (!out_obj || out_obj == Py_None) {
+        // Create a new NumPy array for results (signed integers for scores)
+        npy_intp numpy_size = kernel_input_size;
+        results_array = PyArray_SimpleNew(1, &numpy_size, NPY_INT64);
+        if (!results_array) {
+            PyErr_SetString(PyExc_MemoryError, "Failed to allocate results array");
+            goto cleanup;
+        }
+        kernel_results = (sz_ssize_t *)PyArray_DATA((PyArrayObject *)results_array);
+        kernel_results_stride = PyArray_STRIDE((PyArrayObject *)results_array, 0);
+    }
+    else {
+        // Use provided array
+        if (!PyArray_Check(out_obj)) {
+            PyErr_SetString(PyExc_TypeError, "out must be a NumPy array");
+            goto cleanup;
+        }
+        PyArrayObject *array = (PyArrayObject *)out_obj;
+        if (PyArray_NDIM(array) != 1) {
+            PyErr_SetString(PyExc_ValueError, "out array must be 1-dimensional");
+            goto cleanup;
+        }
+        if (PyArray_SIZE(array) < (npy_intp)kernel_input_size) {
+            PyErr_SetString(PyExc_ValueError, "out array is too small for results");
+            goto cleanup;
+        }
+        if (PyArray_TYPE(array) != NPY_INT64) {
+            PyErr_SetString(PyExc_TypeError, "out array must have int64 dtype");
+            goto cleanup;
+        }
+        kernel_results = (sz_ssize_t *)PyArray_DATA(array);
+        kernel_results_stride = PyArray_STRIDE(array, 0);
+        results_array = out_obj;
+        Py_INCREF(results_array);
+    }
+
+    sz_status_t status = kernel_punned(               //
+        self->handle, device_handle,                  //
+        kernel_a_texts_punned, kernel_b_texts_punned, //
+        kernel_results, kernel_results_stride);
+
+    if (status != sz_success_k) {
+        char const *error_msg;
+        switch (status) {
+        case sz_bad_alloc_k: error_msg = "SmithWaterman failed: memory allocation failed"; break;
+        case sz_invalid_utf8_k: error_msg = "SmithWaterman failed: invalid UTF-8 input"; break;
+        case sz_contains_duplicates_k: error_msg = "SmithWaterman failed: contains duplicates"; break;
+        case sz_overflow_risk_k: error_msg = "SmithWaterman failed: overflow risk"; break;
+        case sz_unexpected_dimensions_k: error_msg = "SmithWaterman failed: input/output size mismatch"; break;
+        case sz_missing_gpu_k: error_msg = "SmithWaterman failed: GPU support is missing in the library"; break;
+        case sz_status_unknown_k: error_msg = "SmithWaterman failed: unknown error"; break;
+        default: error_msg = "SmithWaterman failed: unexpected error"; break;
+        }
+        PyErr_Format(PyExc_RuntimeError, "%s (status code: %d)", error_msg, (int)status);
+        goto cleanup;
+    }
+    return results_array;
+
+cleanup:
+    Py_XDECREF(results_array);
+    return NULL;
+}
+
+static char const doc_SmithWaterman[] = //
+    "SmithWaterman(substitution_matrix, open=-1, extend=-1, capabilities=None)\n"
+    "\n"
+    "Smith-Waterman local alignment scoring engine.\n"
+    "\n"
+    "Args:\n"
+    "  substitution_matrix (np.ndarray): 256x256 int8 substitution matrix.\n"
+    "  open (int): Cost for opening a gap (default: -1).\n"
+    "  extend (int): Cost for extending a gap (default: -1).\n"
+    "  capabilities (Tuple[str], optional): Hardware capabilities to use.\n"
+    "                                       Will be intersected with detected capabilities.\n"
+    "                                       Examples: ('serial',), ('haswell', 'parallel')\n"
+    "\n"
+    "Call with:\n"
+    "  a (sequence): First sequence of strings.\n"
+    "  b (sequence): Second sequence of strings.\n"
+    "  device (DeviceScope, optional): Device execution context.\n"
+    "  out (array, optional): Output buffer for results.";
+
+static PyTypeObject SmithWatermanType = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "stringzillas.SmithWaterman",
+    .tp_doc = doc_SmithWaterman,
+    .tp_basicsize = sizeof(SmithWaterman),
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_new = SmithWaterman_new,
+    .tp_init = (initproc)SmithWaterman_init,
+    .tp_dealloc = (destructor)SmithWaterman_dealloc,
+    .tp_call = (ternaryfunc)SmithWaterman_call,
+};
+
+#pragma endregion
+
+#pragma region Fingerprints
+
+/**
+ *  @brief  Fingerprinting engine for binary strings.
+ */
+typedef struct {
+    PyObject ob_base;
+    sz_fingerprints_t handle;
+    char description[64];
+    sz_capability_t capabilities;
+    sz_size_t ndim;
+} Fingerprints;
+
+static void Fingerprints_dealloc(Fingerprints *self) {
+    if (self->handle) {
+        sz_fingerprints_free(self->handle);
+        self->handle = NULL;
+    }
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static PyObject *Fingerprints_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+    Fingerprints *self = (Fingerprints *)type->tp_alloc(type, 0);
+    if (self != NULL) {
+        self->handle = NULL;
+        self->description[0] = '\0';
+        self->capabilities = 0;
+        self->ndim = 0;
+    }
+    return (PyObject *)self;
+}
+
+static int Fingerprints_init(Fingerprints *self, PyObject *args, PyObject *kwargs) {
+    sz_size_t ndim;
+    PyObject *window_widths_obj = NULL;
+    sz_size_t alphabet_size = 256;
+    PyObject *capabilities_tuple = NULL;
+    sz_capability_t capabilities = default_hardware_capabilities;
+
+    static char *kwlist[] = {"ndim", "window_widths", "alphabet_size", "capabilities", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "n|OnO", kwlist, &ndim, &window_widths_obj, &alphabet_size,
+                                     &capabilities_tuple))
+        return -1;
+
+    // Parse capabilities if provided
+    if (capabilities_tuple)
+        if (parse_and_intersect_capabilities(capabilities_tuple, &capabilities) != 0) return -1;
+
+    sz_size_t *window_widths = NULL;
+    sz_size_t window_widths_count = 0;
+
+    // Parse window_widths if provided - require NumPy array of uint64
+    if (window_widths_obj && window_widths_obj != Py_None) {
+        if (!PyArray_Check(window_widths_obj)) {
+            PyErr_SetString(PyExc_TypeError, "window_widths must be a numpy array of uint64");
+            return -1;
+        }
+
+        PyArrayObject *arr = (PyArrayObject *)window_widths_obj;
+
+        // Check dtype is uint64
+        if (PyArray_TYPE(arr) != NPY_UINT64) {
+            PyErr_SetString(PyExc_TypeError, "window_widths must have dtype uint64");
+            return -1;
+        }
+
+        // Check that it's 1D
+        if (PyArray_NDIM(arr) != 1) {
+            PyErr_SetString(PyExc_ValueError, "window_widths must be a 1D array");
+            return -1;
+        }
+
+        // Check that it's contiguous (no strides)
+        if (!PyArray_IS_C_CONTIGUOUS(arr)) {
+            PyErr_SetString(PyExc_ValueError, "window_widths must be a contiguous C-style array (no strides)");
+            return -1;
+        }
+
+        window_widths_count = PyArray_SIZE(arr);
+        window_widths = (sz_size_t *)PyArray_DATA(arr);
+    }
+
+    sz_status_t status = sz_fingerprints_init(ndim, alphabet_size, window_widths, window_widths_count, NULL,
+                                              capabilities, &self->handle);
+
+    if (status != sz_success_k) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to initialize Fingerprints engine");
+        return -1;
+    }
+
+    snprintf(self->description, sizeof(self->description), "ndim=%zu,window_widths=%zu,alphabet_size=%zu", ndim,
+             window_widths_count, alphabet_size);
+    self->capabilities = capabilities;
+    self->ndim = ndim;
+    return 0;
+}
+
+static PyObject *Fingerprints_repr(Fingerprints *self) {
+    return PyUnicode_FromFormat("Fingerprints(%s)", self->description);
+}
+
+static PyObject *Fingerprints_get_capabilities(Fingerprints *self, void *closure) {
+    return capabilities_to_tuple(self->capabilities);
+}
+
+static PyObject *Fingerprints_call(Fingerprints *self, PyObject *args, PyObject *kwargs) {
+
+    PyObject *texts_obj = NULL, *device_obj = NULL, *out_obj = NULL;
+    static char *kwlist[] = {"texts", "device", "out", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|OO", kwlist, &texts_obj, &device_obj, &out_obj)) return NULL;
+
+    DeviceScope *device_scope = NULL;
+    if (device_obj != NULL && device_obj != Py_None) {
+        if (!PyObject_TypeCheck(device_obj, &DeviceScopeType)) {
+            PyErr_SetString(PyExc_TypeError, "device must be a DeviceScope instance");
+            return NULL;
+        }
+        device_scope = (DeviceScope *)device_obj;
+    }
+
+    sz_device_scope_t device_handle = device_scope ? device_scope->handle : default_device_scope;
+
+    // Handle empty input - return tuple of empty arrays
+    if (PySequence_Check(texts_obj) && PySequence_Size(texts_obj) == 0) {
+        npy_intp dims[2] = {0, self->ndim};
+        PyArrayObject *empty_hashes = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_UINT32);
+        PyArrayObject *empty_counts = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_UINT32);
+
+        if (!empty_hashes || !empty_counts) {
+            Py_XDECREF(empty_hashes);
+            Py_XDECREF(empty_counts);
+            return PyErr_NoMemory();
+        }
+
+        PyObject *result_tuple = PyTuple_New(2);
+        if (!result_tuple) {
+            Py_DECREF(empty_hashes);
+            Py_DECREF(empty_counts);
+            return NULL;
+        }
+
+        PyTuple_SET_ITEM(result_tuple, 0, (PyObject *)empty_hashes);
+        PyTuple_SET_ITEM(result_tuple, 1, (PyObject *)empty_counts);
+        return result_tuple;
+    }
+
+    // Try to swap allocators to unified memory for GPU compatibility
+    if (!try_swap_to_unified_allocator(texts_obj)) return NULL;
+
+    sz_size_t kernel_input_size = 0;
+    void *kernel_texts_punned = NULL;
+    sz_status_t (*kernel_punned)(sz_fingerprints_t, sz_device_scope_t, void *, sz_u32_t *, sz_size_t, sz_u32_t *,
+                                 sz_size_t) = NULL;
+
+    // Handle 32-bit tape inputs
+    sz_sequence_u32tape_t texts_u32tape;
+    sz_bool_t texts_is_u32tape = sz_py_export_strings_as_u32tape( //
+        texts_obj, &texts_u32tape.data, &texts_u32tape.offsets, &texts_u32tape.count);
+    if (texts_is_u32tape) {
+        kernel_input_size = texts_u32tape.count;
+        kernel_punned = sz_fingerprints_u32tape;
+        kernel_texts_punned = &texts_u32tape;
+    }
+
+    // Handle 64-bit tape inputs
+    sz_sequence_u64tape_t texts_u64tape;
+    sz_bool_t texts_is_u64tape =
+        !texts_is_u32tape && sz_py_export_strings_as_u64tape( //
+                                 texts_obj, &texts_u64tape.data, &texts_u64tape.offsets, &texts_u64tape.count);
+    if (texts_is_u64tape) {
+        kernel_input_size = texts_u64tape.count;
+        kernel_punned = sz_fingerprints_u64tape;
+        kernel_texts_punned = &texts_u64tape;
+    }
+
+    // Handle generic sequence inputs
+    sz_sequence_t texts_seq;
+    sz_bool_t texts_is_sequence =
+        !texts_is_u32tape && !texts_is_u64tape && sz_py_export_strings_as_sequence(texts_obj, &texts_seq);
+    if (texts_is_sequence) {
+        kernel_input_size = texts_seq.count;
+        kernel_punned = sz_fingerprints_sequence;
+        kernel_texts_punned = &texts_seq;
+    }
+
+    if (kernel_punned == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Unsupported input type for fingerprinting");
+        return NULL;
+    }
+
+    // Allocate unified memory first for CUDA compatibility
+    sz_size_t total_elements = kernel_input_size * self->ndim;
+    sz_size_t total_bytes = total_elements * sizeof(sz_u32_t);
+
+    sz_u32_t *unified_hashes = (sz_u32_t *)unified_allocator.allocate(total_bytes, unified_allocator.handle);
+    sz_u32_t *unified_counts = (sz_u32_t *)unified_allocator.allocate(total_bytes, unified_allocator.handle);
+
+    if (!unified_hashes || !unified_counts) {
+        if (unified_hashes) unified_allocator.free(unified_hashes, total_bytes, unified_allocator.handle);
+        if (unified_counts) unified_allocator.free(unified_counts, total_bytes, unified_allocator.handle);
+        return PyErr_NoMemory();
+    }
+
+    // Call the kernel with unified memory buffers
+    sz_status_t status = kernel_punned(self->handle, device_handle, kernel_texts_punned, unified_hashes,
+                                       self->ndim * sizeof(sz_u32_t), unified_counts, self->ndim * sizeof(sz_u32_t));
+
+    if (status != sz_success_k) {
+        unified_allocator.free(unified_hashes, total_bytes, unified_allocator.handle);
+        unified_allocator.free(unified_counts, total_bytes, unified_allocator.handle);
+        PyErr_SetString(PyExc_RuntimeError, "Fingerprinting computation failed");
+        return NULL;
+    }
+
+    // Create NumPy arrays for output matrices - each row contains fingerprints for one text
+    npy_intp dims[2] = {kernel_input_size, self->ndim};
+
+    PyArrayObject *hashes_array = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_UINT32);
+    PyArrayObject *counts_array = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_UINT32);
+
+    if (!hashes_array || !counts_array) {
+        Py_XDECREF(hashes_array);
+        Py_XDECREF(counts_array);
+        unified_allocator.free(unified_hashes, total_bytes, unified_allocator.handle);
+        unified_allocator.free(unified_counts, total_bytes, unified_allocator.handle);
+        return PyErr_NoMemory();
+    }
+
+    // Copy from unified memory to NumPy arrays
+    sz_u32_t *numpy_hashes = (sz_u32_t *)PyArray_DATA(hashes_array);
+    sz_u32_t *numpy_counts = (sz_u32_t *)PyArray_DATA(counts_array);
+
+    memcpy(numpy_hashes, unified_hashes, total_bytes);
+    memcpy(numpy_counts, unified_counts, total_bytes);
+
+    // Free unified memory
+    unified_allocator.free(unified_hashes, total_bytes, unified_allocator.handle);
+    unified_allocator.free(unified_counts, total_bytes, unified_allocator.handle);
+
+    // Return tuple of two NumPy arrays: (hashes_matrix, counts_matrix)
+    PyObject *result_tuple = PyTuple_New(2);
+    if (!result_tuple) {
+        Py_DECREF(hashes_array);
+        Py_DECREF(counts_array);
+        return NULL;
+    }
+
+    PyTuple_SET_ITEM(result_tuple, 0, (PyObject *)hashes_array);
+    PyTuple_SET_ITEM(result_tuple, 1, (PyObject *)counts_array);
+
+    return result_tuple;
+}
+
+static char const doc_Fingerprints[] = //
+    "Fingerprints(ndim, window_widths=None, alphabet_size=256, capabilities=None)\n"
+    "\n"
+    "Compute MinHash fingerprints for binary strings.\n"
+    "\n"
+    "Args:\n"
+    "  ndim (int): Number of dimensions per fingerprint.\n"
+    "  window_widths (numpy.array, optional): 1D uint64 contiguous array of window widths. Uses defaults if None.\n"
+    "  alphabet_size (int, optional): Alphabet size, default 256 for binary strings.\n"
+    "  capabilities (tuple, optional): Computational capabilities to enable ('serial', 'parallel', 'cuda').\n"
+    "\n"
+    "Returns:\n"
+    "  tuple: (hashes_matrix, counts_matrix) - Two numpy uint32 matrices of shape (num_texts, ndim).";
+
+static PyGetSetDef Fingerprints_getsetters[] = {
+    {"capabilities", (getter)Fingerprints_get_capabilities, NULL, "computational capabilities", NULL},
+    {NULL} /* Sentinel */
+};
+
+static PyTypeObject FingerprintsType = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "stringzillas.Fingerprints",
+    .tp_doc = doc_Fingerprints,
+    .tp_basicsize = sizeof(Fingerprints),
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_new = Fingerprints_new,
+    .tp_init = (initproc)Fingerprints_init,
+    .tp_getset = Fingerprints_getsetters,
+    .tp_repr = (reprfunc)Fingerprints_repr,
+    .tp_dealloc = (destructor)Fingerprints_dealloc,
+    .tp_call = (ternaryfunc)Fingerprints_call,
 };
 
 #pragma endregion
@@ -1135,16 +1769,21 @@ PyMODINIT_FUNC PyInit_stringzillas(void) {
     sz_py_export_strings_as_sequence = api->sz_py_export_strings_as_sequence;
     sz_py_export_strings_as_u32tape = api->sz_py_export_strings_as_u32tape;
     sz_py_export_strings_as_u64tape = api->sz_py_export_strings_as_u64tape;
+    sz_py_replace_strings_allocator = api->sz_py_replace_strings_allocator;
 
     Py_DECREF(capsule);
     Py_DECREF(stringzilla_module);
 
     // Check that all functions were loaded
     if (!sz_py_export_string_like || !sz_py_export_strings_as_sequence || !sz_py_export_strings_as_u32tape ||
-        !sz_py_export_strings_as_u64tape) {
+        !sz_py_export_strings_as_u64tape || !sz_py_replace_strings_allocator) {
         PyErr_SetString(PyExc_ImportError, "Failed to import required StringZilla C API functions");
         return NULL;
     }
+
+    // Initialize the unified memory allocator for GPU compatibility
+    sz_status_t alloc_status = sz_memory_allocator_init_unified(&unified_allocator);
+    if (alloc_status != sz_success_k) sz_memory_allocator_init_default(&unified_allocator);
 
     // Initialize the default device scope for reuse
     sz_status_t status = sz_device_scope_init_default(&default_device_scope);
@@ -1156,6 +1795,9 @@ PyMODINIT_FUNC PyInit_stringzillas(void) {
     if (PyType_Ready(&DeviceScopeType) < 0) return NULL;
     if (PyType_Ready(&LevenshteinDistancesType) < 0) return NULL;
     if (PyType_Ready(&LevenshteinDistancesUTF8Type) < 0) return NULL;
+    if (PyType_Ready(&NeedlemanWunschType) < 0) return NULL;
+    if (PyType_Ready(&SmithWatermanType) < 0) return NULL;
+    if (PyType_Ready(&FingerprintsType) < 0) return NULL;
 
     m = PyModule_Create(&stringzillas_module);
     if (m == NULL) return NULL;
@@ -1172,27 +1814,12 @@ PyMODINIT_FUNC PyInit_stringzillas(void) {
 
     // Define SIMD capabilities as a tuple
     {
-        sz_capability_t caps = default_hardware_capabilities;
-
-        // Get capability strings using the new function
-        char const *cap_strings[SZ_CAPABILITIES_COUNT];
-        sz_size_t cap_count = sz_capabilities_to_strings_implementation_(caps, cap_strings, SZ_CAPABILITIES_COUNT);
-
         // Create a Python tuple with the capabilities
-        PyObject *caps_tuple = PyTuple_New(cap_count);
+        sz_capability_t caps = default_hardware_capabilities;
+        PyObject *caps_tuple = capabilities_to_tuple(caps);
         if (!caps_tuple) {
             Py_XDECREF(m);
             return NULL;
-        }
-
-        for (sz_size_t i = 0; i < cap_count; i++) {
-            PyObject *cap_str = PyUnicode_FromString(cap_strings[i]);
-            if (!cap_str) {
-                Py_DECREF(caps_tuple);
-                Py_XDECREF(m);
-                return NULL;
-            }
-            PyTuple_SET_ITEM(caps_tuple, i, cap_str);
         }
 
         if (PyModule_AddObject(m, "__capabilities__", caps_tuple) < 0) {
@@ -1223,6 +1850,39 @@ PyMODINIT_FUNC PyInit_stringzillas(void) {
 
     Py_INCREF(&LevenshteinDistancesUTF8Type);
     if (PyModule_AddObject(m, "LevenshteinDistancesUTF8", (PyObject *)&LevenshteinDistancesUTF8Type) < 0) {
+        Py_XDECREF(&LevenshteinDistancesUTF8Type);
+        Py_XDECREF(&LevenshteinDistancesType);
+        Py_XDECREF(&DeviceScopeType);
+        Py_XDECREF(m);
+        return NULL;
+    }
+
+    Py_INCREF(&NeedlemanWunschType);
+    if (PyModule_AddObject(m, "NeedlemanWunsch", (PyObject *)&NeedlemanWunschType) < 0) {
+        Py_XDECREF(&NeedlemanWunschType);
+        Py_XDECREF(&LevenshteinDistancesUTF8Type);
+        Py_XDECREF(&LevenshteinDistancesType);
+        Py_XDECREF(&DeviceScopeType);
+        Py_XDECREF(m);
+        return NULL;
+    }
+
+    Py_INCREF(&SmithWatermanType);
+    if (PyModule_AddObject(m, "SmithWaterman", (PyObject *)&SmithWatermanType) < 0) {
+        Py_XDECREF(&SmithWatermanType);
+        Py_XDECREF(&NeedlemanWunschType);
+        Py_XDECREF(&LevenshteinDistancesUTF8Type);
+        Py_XDECREF(&LevenshteinDistancesType);
+        Py_XDECREF(&DeviceScopeType);
+        Py_XDECREF(m);
+        return NULL;
+    }
+
+    Py_INCREF(&FingerprintsType);
+    if (PyModule_AddObject(m, "Fingerprints", (PyObject *)&FingerprintsType) < 0) {
+        Py_XDECREF(&FingerprintsType);
+        Py_XDECREF(&SmithWatermanType);
+        Py_XDECREF(&NeedlemanWunschType);
         Py_XDECREF(&LevenshteinDistancesUTF8Type);
         Py_XDECREF(&LevenshteinDistancesType);
         Py_XDECREF(&DeviceScopeType);
