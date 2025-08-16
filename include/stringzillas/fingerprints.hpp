@@ -1288,7 +1288,8 @@ struct floating_rolling_hashers<sz_cap_haswell_k, dimensions_> {
     using min_counts_span_t = span<min_count_t, dimensions_k>;
 
     static constexpr unsigned hashes_per_ymm_k = sizeof(sz_u256_vec_t) / sizeof(rolling_state_t);
-    static constexpr bool has_incomplete_tail_group_k = dimensions_k % hashes_per_ymm_k;
+	// fix warning C4800: Implicit conversion from 'unsigned __int64' to bool. Possible information loss:
+    static constexpr bool has_incomplete_tail_group_k = !!(dimensions_k % hashes_per_ymm_k);
     static constexpr size_t aligned_dimensions_k =
         has_incomplete_tail_group_k ? (dimensions_k / hashes_per_ymm_k + 1) * hashes_per_ymm_k : (dimensions_k);
     static constexpr unsigned groups_count_k = aligned_dimensions_k / hashes_per_ymm_k;
