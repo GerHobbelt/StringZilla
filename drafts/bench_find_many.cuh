@@ -5,6 +5,7 @@
 #include <tuple> // `std::tuple`
 #include <span>  // `std::span`
 
+#define FU_ENABLE_NUMA 0
 #include <fork_union.hpp> // Fork-join scoped thread pool
 
 #include <stringzillas/find_many.hpp> // C++ templates for string processing
@@ -96,22 +97,6 @@ struct find_many_callable {
     }
 };
 
-template <typename value_type_>
-struct arrays_equality {
-    using vector_t = unified_vector<value_type_>;
-    bool operator()(check_value_t const &a, check_value_t const &b) const noexcept {
-        vector_t const &a_ = *reinterpret_cast<vector_t const *>(a);
-        vector_t const &b_ = *reinterpret_cast<vector_t const *>(b);
-        if (a_.size() != b_.size()) return false;
-        for (std::size_t i = 0; i < a_.size(); ++i)
-            if (a_[i] != b_[i]) {
-                std::printf("Mismatch at index %zu\n", i);
-                return false;
-            }
-        return true;
-    }
-};
-
 void bench_find_many(environment_t const &env) {
 
     using namespace std::string_literals; // for "s" suffix
@@ -135,9 +120,9 @@ void bench_find_many(environment_t const &env) {
     using matches_equality_t = arrays_equality<find_many_match_t>;
 
     // Let's reuse a thread-pool to amortize the cost of spawning threads.
-    fork_union_t pool;
+    fu::basic_pool_t pool;
     if (!pool.try_spawn(std::thread::hardware_concurrency())) throw std::runtime_error("Failed to spawn thread pool.");
-    static_assert(executor_like<fork_union_t>);
+    static_assert(executor_like<fu::basic_pool_t>);
 
     auto scramble_accelerated_results = [&](auto &results_accelerated) {
         std::shuffle(results_accelerated.begin(), results_accelerated.end(), global_random_generator());
@@ -180,7 +165,7 @@ void bench_find_many(environment_t const &env) {
         // Parallel search
         bench_nullary( //
             env, "count_many_parallel:"s + shape_suffix, call_count_baseline,
-            find_many_callable<find_many_u32_parallel_t, counts_t, fork_union_t &>( //
+            find_many_callable<find_many_u32_parallel_t, counts_t, fu::basic_pool_t &>( //
                 env, counts_accelerated, matches_accelerated, dict, {}, pool),
             callable_no_op_t {},  // preprocessing
             counts_equality_t {}) // equality check
@@ -188,7 +173,7 @@ void bench_find_many(environment_t const &env) {
 
         bench_nullary( //
             env, "find_many_parallel:"s + shape_suffix, call_find_baseline,
-            find_many_callable<find_many_u32_parallel_t, matches_t, fork_union_t &>( //
+            find_many_callable<find_many_u32_parallel_t, matches_t, fu::basic_pool_t &>( //
                 env, counts_accelerated, matches_accelerated, dict, {}, pool),
             callable_no_op_t {},   // preprocessing
             matches_equality_t {}) // equality check

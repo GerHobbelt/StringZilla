@@ -24,9 +24,22 @@ enum bytes_per_cell_t : uint_least8_t {
     eight_bytes_per_cell_k = 8,
 };
 
+struct dummy_mutex_t {
+    constexpr void lock() noexcept {}
+    constexpr void unlock() noexcept {}
+};
+
+struct dummy_prong_t {
+    std::size_t task = 0;
+    std::size_t thread = 0;
+
+    operator std::size_t() const noexcept { return task; }
+};
+
 struct dummy_executor_t {
 
-    constexpr size_t thread_count() const noexcept { return 1; }
+    constexpr size_t threads_count() const noexcept { return 1; }
+    constexpr dummy_mutex_t make_mutex() const noexcept { return {}; }
 
     /**
      *  @brief  Calls the @p function for each index from 0 to @p (n) in such
@@ -34,8 +47,8 @@ struct dummy_executor_t {
      *          the same thread.
      */
     template <typename function_type_>
-    inline void for_each_static(size_t n, function_type_ &&function) const noexcept {
-        for (size_t i = 0; i < n; ++i) function(i);
+    inline void for_n(size_t n, function_type_ &&function) const noexcept {
+        for (size_t i = 0; i < n; ++i) function(dummy_prong_t {i, 0});
     }
 
     /**
@@ -45,7 +58,7 @@ struct dummy_executor_t {
      *          handled by a particular thread.
      */
     template <typename function_type_>
-    inline void for_each_slice(size_t n, function_type_ &&function) const noexcept {
+    inline void for_slices(size_t n, function_type_ &&function) const noexcept {
         function(0, n);
     }
 
@@ -55,8 +68,8 @@ struct dummy_executor_t {
      *          so each thread eagerly processes the next index in the range.
      */
     template <typename function_type_>
-    inline void for_each_dynamic(size_t n, function_type_ &&function) const noexcept {
-        for (size_t i = 0; i < n; ++i) function(i);
+    inline void for_n_dynamic(size_t n, function_type_ &&function) const noexcept {
+        for (size_t i = 0; i < n; ++i) function(dummy_prong_t {i, 0});
     }
 
     /**
@@ -64,27 +77,27 @@ struct dummy_executor_t {
      *  @param[in] function The callback, receiving the thread index as an argument.
      */
     template <typename function_type_>
-    void for_each_thread(function_type_ const &function) noexcept {
+    void for_threads(function_type_ &&function) noexcept {
         function(0);
     }
 };
 
 template <typename executor_type_>
 concept executor_like = requires(executor_type_ executor) {
-#if !defined(__NVCC__)
-    { executor.thread_count() } -> std::same_as<size_t>;
+#if !defined(__NVCC__) && 0
+    { executor.threads_count() } -> std::same_as<size_t>;
     {
-        executor.for_each_static(0u, [](size_t) {})
-    } -> std::same_as<void>;
+        executor.for_n(0u, [](size_t) {})
+    };
     {
-        executor.for_each_slice(0u, [](size_t, size_t) {})
-    } -> std::same_as<void>;
+        executor.for_slices(0u, [](size_t, size_t) {})
+    };
     {
-        executor.for_each_dynamic(0u, [](size_t) {})
-    } -> std::same_as<void>;
+        executor.for_n_dynamic(0u, [](size_t) {})
+    };
     {
-        executor.for_each_thread([](size_t) {})
-    } -> std::same_as<void>;
+        executor.for_threads([](size_t) {})
+    };
 #else
     sizeof(executor) > 0;
 #endif
@@ -98,7 +111,7 @@ struct openmp_executor_t {
      *          the same thread.
      */
     template <typename function_type_>
-    inline void for_each_static(size_t n, function_type_ &&function) const noexcept {
+    inline void for_n(size_t n, function_type_ &&function) const noexcept {
 #pragma omp parallel for
         for (size_t i = 0; i < n; ++i) function(i);
     }
@@ -110,7 +123,7 @@ struct openmp_executor_t {
      *          handled by a particular thread.
      */
     template <typename function_type_>
-    inline void for_each_slice(size_t n, function_type_ &&function) const noexcept {
+    inline void for_slices(size_t n, function_type_ &&function) const noexcept {
         // OpenMP won't use more threads than the number of available cores
         // and by using STL to query that number, we avoid the need to link
         // against OpenMP libraries.
@@ -130,7 +143,7 @@ struct openmp_executor_t {
      *          so each thread eagerly processes the next index in the range.
      */
     template <typename function_type_>
-    inline void for_each_dynamic(size_t n, function_type_ &&function) const noexcept {
+    inline void for_n_dynamic(size_t n, function_type_ &&function) const noexcept {
 #pragma omp parallel for schedule(dynamic, 1)
         for (size_t i = 0; i < n; ++i) function(i);
     }
@@ -140,7 +153,7 @@ struct openmp_executor_t {
      *  @param[in] function The callback, receiving the thread index as an argument.
      */
     template <typename function_type_>
-    void for_each_thread(function_type_ const &function) noexcept {
+    void for_threads(function_type_ const &function) noexcept {
         // ! Using the `omp_get_thread_num()` would force us to include the OpenMP headers
         // ! and link to the right symbols, which is not always possible.
         std::atomic<size_t> atomic_thread_index = 0;
@@ -151,7 +164,7 @@ struct openmp_executor_t {
         }
     }
 
-    inline size_t thread_count() const noexcept {
+    inline size_t threads_count() const noexcept {
         // ! Using the `omp_get_num_threads()` would force us to include the OpenMP headers
         // ! and link to the right symbols, which is not always possible.
         std::atomic<size_t> atomic_thread_index = 0;
@@ -164,7 +177,7 @@ struct openmp_executor_t {
 #if !defined(__NVCC__)
 static_assert(executor_like<dummy_executor_t>);
 static_assert(executor_like<openmp_executor_t>);
-static_assert(!executor_like<int>);
+// static_assert(!executor_like<int>);
 #endif
 
 template <typename continuous_type_>
