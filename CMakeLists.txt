@@ -5,6 +5,9 @@
 # * stringzilla_header: A header-only library with the StringZilla C and C++ headers.
 # * stringzilla_shared: A shared library with the StringZilla C and C++ headers and dynamic SIMD dispatch.
 # * stringzilla_bare: A shared library with the StringZilla headers, but without linking the standard C library.
+# * stringzillas_cpus_shared: A shared library with the StringZillas parallel algorithms for multi-threaded CPUs.
+# * stringzillas_cuda_shared: A shared library with the StringZillas parallel algorithms for CUDA-capable GPUs.
+# * stringzillas_rocm_shared: A shared library with the StringZillas parallel algorithms for ROCm-capable GPUs.
 #
 # Tests for different C++ standards:
 #
@@ -31,10 +34,10 @@
 #
 # Parallel Benchmarks:
 #
-# * stringzillas_bench_similarity_cpp20: A benchmark for similarity operations.
-# * stringzillas_bench_similarity_cu20: A benchmark for similarity operations on GPU.
-# * stringzillas_bench_fingerprint_cpp20: A benchmark for finding many substrings.
-# * stringzillas_bench_fingerprint_cu20: A benchmark for finding many substrings on GPU.
+# * stringzillas_bench_similarities_cpp20: A benchmark for similarity operations.
+# * stringzillas_bench_similarities_cu20: A benchmark for similarity operations on GPU.
+# * stringzillas_bench_fingerprints_cpp20: A benchmark for finding many substrings.
+# * stringzillas_bench_fingerprints_cu20: A benchmark for finding many substrings on GPU.
 #
 # For higher-level language bindings separate build scripts are provided, native to each toolchain.
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
@@ -42,7 +45,7 @@ project(
     stringzilla
     VERSION 3.12.5
     LANGUAGES C CXX ASM
-    DESCRIPTION "SIMD-accelerated string search, sort, hashes, fingerprints, & edit distances"
+    DESCRIPTION "Search, hash, sort, fingerprint, and fuzzy-match strings faster via SWAR, SIMD, and GPGPU"
     HOMEPAGE_URL "https://github.com/ashvardanian/stringzilla"
 )
 
@@ -122,6 +125,7 @@ option(STRINGZILLA_INSTALL "Install CMake targets" OFF)
 option(STRINGZILLA_BUILD_TEST "Compile a native unit test in C++" ${STRINGZILLA_IS_MAIN_PROJECT})
 option(STRINGZILLA_BUILD_BENCHMARK "Compile a native benchmark in C++" ${STRINGZILLA_IS_MAIN_PROJECT})
 option(STRINGZILLA_BUILD_SHARED "Compile a dynamic library" ${STRINGZILLA_IS_MAIN_PROJECT})
+option(STRINGZILLAS_BUILD_SHARED "Compile dynamic parallel libraries" ${STRINGZILLA_IS_MAIN_PROJECT})
 set(STRINGZILLA_TARGET_ARCH
     ""
     CACHE STRING "Architecture to tell the compiler to optimize for (-march)"
@@ -246,7 +250,7 @@ function (set_compiler_flags target cpp_standard target_arch compiler_id)
             target_compile_options(${target} PRIVATE "-O0;-g")
         endif ()
         if (${CMAKE_BUILD_TYPE} STREQUAL "Release" OR ${CMAKE_BUILD_TYPE} STREQUAL "RelWithDebInfo")
-            target_compile_options(${target} PRIVATE "-O3")
+            target_compile_options(${target} PRIVATE "-O2")
         endif ()
     elseif (${compiler_id} STREQUAL "NVIDIA")
         if (${CMAKE_BUILD_TYPE} STREQUAL "Debug" OR ${CMAKE_BUILD_TYPE} STREQUAL "RelWithDebInfo")
@@ -267,7 +271,7 @@ function (set_compiler_flags target cpp_standard target_arch compiler_id)
             )
         endif ()
         if (${CMAKE_BUILD_TYPE} STREQUAL "Release" OR ${CMAKE_BUILD_TYPE} STREQUAL "RelWithDebInfo")
-            target_compile_options(${target} PRIVATE "-O3")
+            target_compile_options(${target} PRIVATE "-O2")
         endif ()
     endif ()
 
@@ -291,7 +295,14 @@ function (set_compiler_flags target cpp_standard target_arch compiler_id)
     if ("${target_arch}" STREQUAL "")
         # Only use the current system if we are not cross compiling
         if ((NOT CMAKE_CROSSCOMPILING) OR (CMAKE_SYSTEM_PROCESSOR MATCHES CMAKE_HOST_SYSTEM_PROCESSOR))
-            if (NOT (${compiler_id} STREQUAL "MSVC"))
+            if (${compiler_id} STREQUAL "NVIDIA")
+                # For NVCC, pass native flag to host compiler
+                include(CheckCXXCompilerFlag)
+                check_cxx_compiler_flag("-march=native" supports_march_native)
+                if (supports_march_native)
+                    target_compile_options(${target} PRIVATE "-Xcompiler=-march=native")
+                endif ()
+            elseif (NOT (${compiler_id} STREQUAL "MSVC"))
                 include(CheckCXXCompilerFlag)
                 check_cxx_compiler_flag("-march=native" supports_march_native)
                 if (supports_march_native)
@@ -305,6 +316,9 @@ function (set_compiler_flags target cpp_standard target_arch compiler_id)
     else ()
         if (${compiler_id} STREQUAL "MSVC")
             target_compile_options(${target} PRIVATE "/arch:${target_arch}")
+        elseif (${compiler_id} STREQUAL "NVIDIA")
+            # NVCC handles CPU architecture through host compiler flags
+            target_compile_options(${target} PRIVATE "-Xcompiler=-march=${target_arch}")
         else ()
             target_compile_options(${target} PRIVATE "-march=${target_arch}")
         endif ()
@@ -330,8 +344,8 @@ function (set_compiler_flags target cpp_standard target_arch compiler_id)
                 # ! NVCC can't handle sanitizers?!
                 # https://stackoverflow.com/questions/75590579/cuda-fails-to-initialise-when-address-sanitizer-is-enabled
             else ()
-                # target_compile_options(${target} PRIVATE "-fsanitize=address;-fsanitize=leak")
-                # target_link_options(${target} PRIVATE "-fsanitize=address;-fsanitize=leak")
+                target_compile_options(${target} PRIVATE "-fsanitize=address" "-fsanitize=undefined")
+                target_link_options(${target} PRIVATE "-fsanitize=address" "-fsanitize=undefined")
             endif ()
         endif ()
     else ()
@@ -372,14 +386,18 @@ if (${STRINGZILLA_BUILD_BENCHMARK})
     define_launcher(stringzilla_bench_memory_cpp20 scripts/bench_memory.cpp 20 "${STRINGZILLA_TARGET_ARCH}")
 
     # Parallel benchmarks
-    define_launcher(stringzillas_bench_similarity_cpp20 scripts/bench_similarity.cpp 20 "${STRINGZILLA_TARGET_ARCH}")
-    define_launcher(stringzillas_bench_fingerprint_cpp20 scripts/bench_fingerprint.cpp 20 "${STRINGZILLA_TARGET_ARCH}")
+    define_launcher(
+        stringzillas_bench_similarities_cpp20 scripts/bench_similarities.cpp 20 "${STRINGZILLA_TARGET_ARCH}"
+    )
+    define_launcher(
+        stringzillas_bench_fingerprints_cpp20 scripts/bench_fingerprints.cpp 20 "${STRINGZILLA_TARGET_ARCH}"
+    )
     if (ENABLE_CUDA)
         define_gpu_launcher(
-            stringzillas_bench_similarity_cu20 scripts/bench_similarity.cu 20 "${STRINGZILLA_TARGET_ARCH}"
+            stringzillas_bench_similarities_cu20 scripts/bench_similarities.cu 20 "${STRINGZILLA_TARGET_ARCH}"
         )
         define_gpu_launcher(
-            stringzillas_bench_fingerprint_cu20 scripts/bench_fingerprint.cu 20 "${STRINGZILLA_TARGET_ARCH}"
+            stringzillas_bench_fingerprints_cu20 scripts/bench_fingerprints.cu 20 "${STRINGZILLA_TARGET_ARCH}"
         )
     endif ()
 endif ()
@@ -517,31 +535,140 @@ if (${STRINGZILLA_BUILD_SHARED})
     endif ()
 endif ()
 
+if (${STRINGZILLAS_BUILD_SHARED})
+    # StringZillas shared library targets for parallel string operations
+    function (define_stringzillas_shared target source_file backend_flags)
+        add_library(${target} SHARED ${source_file})
+        add_library(${PROJECT_NAME}::${target} ALIAS ${target})
+
+        set_target_properties(
+            ${target}
+            PROPERTIES VERSION ${PROJECT_VERSION}
+                       SOVERSION 1
+                       POSITION_INDEPENDENT_CODE ON
+        )
+
+        target_include_directories(${target} PUBLIC include)
+        target_include_directories(${target} PRIVATE fork_union/include)
+        target_compile_definitions(${target} PRIVATE "SZ_DYNAMIC_DISPATCH=1")
+        target_compile_definitions(${target} PRIVATE "SZ_AVOID_LIBC=0")
+        target_compile_definitions(${target} PRIVATE "SZ_DEBUG=0")
+
+        # Set backend-specific compilation flags
+        foreach (flag ${backend_flags})
+            target_compile_definitions(${target} PRIVATE ${flag})
+        endforeach ()
+
+        # Use C++17 for StringZillas
+        set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+
+        # Architecture-specific optimizations
+        target_compile_options(
+            ${target} PRIVATE "$<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-fPIC>" "$<$<CXX_COMPILER_ID:MSVC>:/O2>"
+        )
+
+        # Dynamic dispatch for SIMD on different architectures
+        if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+            target_compile_definitions(${target} PRIVATE "SZ_IS_64BIT_X86_=1" "SZ_IS_64BIT_ARM_=0")
+        elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            target_compile_definitions(${target} PRIVATE "SZ_IS_64BIT_X86_=0" "SZ_IS_64BIT_ARM_=1")
+        endif ()
+
+        # Link threading libraries for CPU backend
+        find_package(Threads REQUIRED)
+        target_link_libraries(${target} PRIVATE Threads::Threads)
+
+        # Platform-specific runtime libraries (similar to define_shared)
+        if (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+            target_link_libraries(${target} PRIVATE msvcrt.lib vcruntime.lib ucrt.lib)
+        endif ()
+
+    endfunction ()
+
+    # Define StringZillas CPU shared library
+    define_stringzillas_shared(stringzillas_cpus_shared c/stringzillas.cpp "SZ_USE_CUDA=0;SZ_USE_ROCM=0")
+
+    # Define StringZillas CUDA shared library (only if CUDA is available)
+    if (ENABLE_CUDA)
+        define_stringzillas_shared(stringzillas_cuda_shared c/stringzillas.cu "SZ_USE_CUDA=1;SZ_USE_ROCM=0")
+
+        # Link CUDA libraries
+        target_link_libraries(stringzillas_cuda_shared PRIVATE CUDA::cudart)
+
+        # Set CUDA-specific properties
+        set_target_properties(stringzillas_cuda_shared PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+        set_target_properties(stringzillas_cuda_shared PROPERTIES CUDA_ARCHITECTURES "70;75;80;86;89;90")
+
+        # Enable CUDA separable compilation for device code
+        set_target_properties(stringzillas_cuda_shared PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    endif ()
+
+    # TODO: Define StringZillas ROCm shared library when ROCm support is added if (ENABLE_ROCM)
+    # define_stringzillas_shared(stringzillas_rocm_shared "SZ_USE_CUDA=0;SZ_USE_ROCM=1") endif ()
+
+endif ()
+
 if (STRINGZILLA_INSTALL)
-    install(
-        TARGETS stringzilla_shared
-        ARCHIVE
-        BUNDLE
-        FRAMEWORK
-        LIBRARY
-        OBJECTS
-        PRIVATE_HEADER
-        PUBLIC_HEADER
-        RESOURCE
-        RUNTIME
-    )
-    install(
-        TARGETS stringzilla_bare
-        ARCHIVE
-        BUNDLE
-        FRAMEWORK
-        LIBRARY
-        OBJECTS
-        PRIVATE_HEADER
-        PUBLIC_HEADER
-        RESOURCE
-        RUNTIME
-    )
+    if (TARGET stringzilla_header)
+        install(
+            TARGETS stringzilla_shared
+            ARCHIVE
+            BUNDLE
+            FRAMEWORK
+            LIBRARY
+            OBJECTS
+            PRIVATE_HEADER
+            PUBLIC_HEADER
+            RESOURCE
+            RUNTIME
+        )
+    endif ()
+    if (TARGET stringzilla_bare)
+        install(
+            TARGETS stringzilla_bare
+            ARCHIVE
+            BUNDLE
+            FRAMEWORK
+            LIBRARY
+            OBJECTS
+            PRIVATE_HEADER
+            PUBLIC_HEADER
+            RESOURCE
+            RUNTIME
+        )
+    endif ()
+
+    # Install StringZillas shared libraries if they were built
+    if (TARGET stringzillas_cpus_shared)
+        install(
+            TARGETS stringzillas_cpus_shared
+            ARCHIVE
+            BUNDLE
+            FRAMEWORK
+            LIBRARY
+            OBJECTS
+            PRIVATE_HEADER
+            PUBLIC_HEADER
+            RESOURCE
+            RUNTIME
+        )
+    endif ()
+
+    if (TARGET stringzillas_cuda_shared)
+        install(
+            TARGETS stringzillas_cuda_shared
+            ARCHIVE
+            BUNDLE
+            FRAMEWORK
+            LIBRARY
+            OBJECTS
+            PRIVATE_HEADER
+            PUBLIC_HEADER
+            RESOURCE
+            RUNTIME
+        )
+    endif ()
+
     install(DIRECTORY ${STRINGZILLA_INCLUDE_BUILD_DIR} DESTINATION ${STRINGZILLA_INCLUDE_INSTALL_DIR})
     install(DIRECTORY ./c/ DESTINATION /usr/src/${PROJECT_NAME}/)
 endif ()

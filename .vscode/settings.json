@@ -65,6 +65,7 @@
     "endregion",
     "endswith",
     "Eron",
+    "extremums",
     "Fisher",
     "Galil",
     "getitem",
@@ -112,8 +113,10 @@
     "memmove",
     "Merkle-Damgård",
     "Mersenne",
+    "minhash",
     "misalign",
     "MODINIT",
+    "modulos",
     "Morten",
     "Mosè",
     "MSVC",
@@ -135,6 +138,7 @@
     "npos",
     "nullary",
     "nullptr",
+    "NUMA",
     "numpy",
     "NVCC",
     "octdigits",
@@ -353,6 +357,7 @@
     "barrier": "cpp",
     "pipeline": "cpp",
     "__functional_03": "cpp",
-    "__functional_base_03": "cpp"
+    "__functional_base_03": "cpp",
+    "stream_ref": "cpp"
   }
 }

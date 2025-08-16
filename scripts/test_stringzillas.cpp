@@ -2,7 +2,7 @@
  *  @brief   Extensive @b stress-testing suite for StringCuZilla parallel operations, written in CUDA C++.
  *  @see     Stress-tests on real-world and synthetic data are integrated into the @b `scripts/bench*.cpp` benchmarks.
  *
- *  @file    test.cu
+ *  @file    test_stringzillas.cpp
  *  @author  Ash Vardanian
  */
 #undef NDEBUG // ! Enable all assertions for testing
@@ -30,8 +30,8 @@
 
 #include "test_stringzillas.cuh"
 
-#include "test_fingerprint.cuh"
-#include "test_similarity.cuh"
+#include "test_fingerprints.cuh"
+#include "test_similarities.cuh"
 
 namespace szs = ashvardanian::stringzillas;
 
@@ -41,8 +41,8 @@ int main(int argc, char const **argv) {
     if (auto code = szs::scripts::log_environment(); code != 0) return code;
 
     try {
-        szs::scripts::test_rolling_hasher();
         szs::scripts::test_rolling_hashers_equivalence();
+        szs::scripts::test_rolling_hasher();
         szs::scripts::test_similarity_scores_equivalence();
         szs::scripts::test_similarity_scores_memory_usage();
     }

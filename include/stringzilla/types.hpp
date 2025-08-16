@@ -85,10 +85,20 @@
 #define sz_constexpr_if_cpp20
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(_MSC_VER)
+#define SZ_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
 #define SZ_INLINE inline __attribute__((always_inline))
 #else
 #define SZ_INLINE inline
+#endif
+
+#if defined(_MSC_VER)
+#define SZ_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+#define SZ_NOINLINE __attribute__((noinline))
+#else
+#define SZ_NOINLINE
 #endif
 
 #if !SZ_AVOID_STL
@@ -126,13 +136,14 @@ using rune_t = sz_rune_t;
 using sorted_idx_t = sz_sorted_idx_t;
 
 /** @sa sz_status_t */
-enum class status_t {
+enum class status_t : int {
     success_k = sz_success_k,
     bad_alloc_k = sz_bad_alloc_k,
     invalid_utf8_k = sz_invalid_utf8_k,
     contains_duplicates_k = sz_contains_duplicates_k,
     overflow_risk_k = sz_overflow_risk_k,
     unexpected_dimensions_k = sz_unexpected_dimensions_k,
+    missing_gpu_k = sz_missing_gpu_k,
     unknown_k = sz_status_unknown_k,
 };
 
@@ -238,6 +249,11 @@ struct span<value_type_, SZ_SIZE_MAX> {
         return span(data_ + offset, count);
     }
 };
+
+template <typename value_type_, std::size_t extent_>
+span<value_type_, extent_> to_span(span<value_type_, extent_> span) noexcept {
+    return span;
+}
 
 template <std::size_t extent_ = SZ_SIZE_MAX, typename container_type_ = void>
 span<typename container_type_::value_type, extent_> to_span(container_type_ &container) noexcept {
