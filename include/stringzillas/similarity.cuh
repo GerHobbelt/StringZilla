@@ -34,19 +34,19 @@
  *  - `levenshtein_distances`: {CUDA and Kepler} for any chars and lengths, {Hopper} for 8-bit and 16-bit lengths.
  *  - `needleman_wunsch_score`.
  */
-#ifndef STRINGCUZILLA_SIMILARITY_CUH_
-#define STRINGCUZILLA_SIMILARITY_CUH_
+#ifndef STRINGZILLAS_SIMILARITY_CUH_
+#define STRINGZILLAS_SIMILARITY_CUH_
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda/pipeline>        // `cuda::pipeline`
 #include <cooperative_groups.h> // `cooperative_groups::this_grid()`
 
-#include "stringcuzilla/types.cuh"
-#include "stringcuzilla/similarity.hpp"
+#include "stringzillas/types.cuh"
+#include "stringzillas/similarity.hpp"
 
 namespace ashvardanian {
-namespace stringzilla {
+namespace stringzillas {
 
 #pragma region - Common Aliases
 
@@ -2010,6 +2010,10 @@ __global__ void _affine_score_on_each_cuda_warp(                             //
 
 #pragma region - Levenshtein Distance in CUDA
 
+/**
+ *  @brief Wraps a single task for the CUDA-based @b byte-level "similarity" kernels.
+ *  @note Used to allow sorting/grouping inputs to differentiate device-wide and warp-wide tasks.
+ */
 template <typename char_type_>
 struct cuda_similarity_task {
     using char_t = char_type_;
@@ -2973,7 +2977,7 @@ struct smith_waterman_scores<char, error_costs_256x256_t, gap_costs_type_, alloc
 
 #pragma endregion
 
-} // namespace stringzilla
+} // namespace stringzillas
 } // namespace ashvardanian
 
-#endif // STRINGCUZILLA_SIMILARITY_CUH_
+#endif // STRINGZILLAS_SIMILARITY_CUH_

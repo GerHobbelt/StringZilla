@@ -6,17 +6,19 @@
 
 #include <fork_union.hpp> // Fork-join scoped thread pool
 
-#include <stringcuzilla/similarity.hpp> // C++ templates for string similarity measures
+#include <stringzillas/similarity.hpp> // C++ templates for string similarity measures
 
 #if SZ_USE_CUDA
-#include <stringcuzilla/similarity.cuh> // Parallel string processing in CUDA
+#include <stringzillas/similarity.cuh> // Parallel string processing in CUDA
 #endif
 
 #include "bench.hpp"
 
 namespace ashvardanian {
-namespace stringzilla {
+namespace stringzillas {
 namespace scripts {
+
+using namespace ashvardanian::stringzilla::scripts;
 
 using similarities_t = unified_vector<sz_ssize_t>;
 
@@ -48,11 +50,10 @@ struct similarities_callable {
 
     call_result_t operator()(std::span<token_view_t const> a, std::span<token_view_t const> b) noexcept(false) {
         // Unpack the extra arguments from `std::tuple` into the engine call using `std::apply`
-        sz::status_t status =
-            std::apply([&](auto &&...rest) { return engine(a, b, results.data(), rest...); }, extra_args);
+        status_t status = std::apply([&](auto &&...rest) { return engine(a, b, results.data(), rest...); }, extra_args);
         do_not_optimize(status);
 
-        if (status != sz::status_t::success_k) throw std::runtime_error("Failed to compute Levenshtein distance.");
+        if (status != status_t::success_k) throw std::runtime_error("Failed to compute Levenshtein distance.");
         do_not_optimize(results);
         std::size_t bytes_passed = 0, cells_passed = 0;
         for (std::size_t i = 0; i < results.size(); ++i) {
@@ -87,7 +88,7 @@ void bench_levenshtein(environment_t const &env) {
     using namespace std::string_literals; // for "s" suffix
 
 #if SZ_USE_CUDA
-    sz::gpu_specs_t specs = *sz::gpu_specs();
+    gpu_specs_t specs = *gpu_specs();
 #endif
     std::vector<std::size_t> batch_sizes = {1, 64, 1024, 32 * 1024};
 #if SZ_DEBUG
@@ -161,7 +162,7 @@ void bench_levenshtein(environment_t const &env) {
 
 #if SZ_USE_CUDA
         bench_unary(env, "levenshtein_cuda:batch"s + std::to_string(batch_size), call_linear_baseline,
-                    similarities_callable<levenshtein_cuda_t, sz::gpu_specs_t>(
+                    similarities_callable<levenshtein_cuda_t, gpu_specs_t>(
                         env, results_linear_accelerated, levenshtein_cuda_t {weird_uniform, weird_linear}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -170,7 +171,7 @@ void bench_levenshtein(environment_t const &env) {
 
         bench_unary(
             env, "affine_levenshtein_cuda:batch"s + std::to_string(batch_size), call_affine_baseline,
-            similarities_callable<affine_levenshtein_cuda_t, sz::gpu_specs_t>(
+            similarities_callable<affine_levenshtein_cuda_t, gpu_specs_t>(
                 env, results_affine_accelerated, affine_levenshtein_cuda_t {weird_uniform, weird_affine}, specs),
             callable_no_op_t {},        // preprocessing
             similarities_equality_t {}) // equality check
@@ -180,7 +181,7 @@ void bench_levenshtein(environment_t const &env) {
 
 #if SZ_USE_KEPLER
         bench_unary(env, "levenshtein_kepler:batch"s + std::to_string(batch_size), call_linear_baseline,
-                    similarities_callable<levenshtein_kepler_t, sz::gpu_specs_t>(
+                    similarities_callable<levenshtein_kepler_t, gpu_specs_t>(
                         env, results_linear_accelerated, levenshtein_kepler_t {weird_uniform, weird_linear}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -189,7 +190,7 @@ void bench_levenshtein(environment_t const &env) {
 
         bench_unary(
             env, "affine_levenshtein_kepler:batch"s + std::to_string(batch_size), call_affine_baseline,
-            similarities_callable<affine_levenshtein_kepler_t, sz::gpu_specs_t>(
+            similarities_callable<affine_levenshtein_kepler_t, gpu_specs_t>(
                 env, results_affine_accelerated, affine_levenshtein_kepler_t {weird_uniform, weird_affine}, specs),
             callable_no_op_t {},        // preprocessing
             similarities_equality_t {}) // equality check
@@ -199,7 +200,7 @@ void bench_levenshtein(environment_t const &env) {
 
 #if SZ_USE_HOPPER
         bench_unary(env, "levenshtein_hopper:batch"s + std::to_string(batch_size), call_linear_baseline,
-                    similarities_callable<levenshtein_hopper_t, sz::gpu_specs_t>(
+                    similarities_callable<levenshtein_hopper_t, gpu_specs_t>(
                         env, results_linear_accelerated, levenshtein_hopper_t {weird_uniform, weird_linear}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -208,7 +209,7 @@ void bench_levenshtein(environment_t const &env) {
 
         bench_unary(
             env, "affine_levenshtein_hopper:batch"s + std::to_string(batch_size), call_affine_baseline,
-            similarities_callable<affine_levenshtein_hopper_t, sz::gpu_specs_t>(
+            similarities_callable<affine_levenshtein_hopper_t, gpu_specs_t>(
                 env, results_affine_accelerated, affine_levenshtein_hopper_t {weird_uniform, weird_affine}, specs),
             callable_no_op_t {},        // preprocessing
             similarities_equality_t {}) // equality check
@@ -228,7 +229,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
     auto blosum62_matrix = blosum62_mat.decompressed();
 
 #if SZ_USE_CUDA
-    sz::gpu_specs_t specs = *sz::gpu_specs();
+    gpu_specs_t specs = *gpu_specs();
 #endif
     std::vector<std::size_t> batch_sizes = {1, 64, 1024, 32 * 1024};
 #if SZ_DEBUG
@@ -317,7 +318,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
 
 #if SZ_USE_CUDA
         bench_unary(env, "needleman_wunsch_cuda:batch"s + std::to_string(batch_size), call_linear_global_baseline,
-                    similarities_callable<needleman_wunsch_cuda_t, sz::gpu_specs_t>(
+                    similarities_callable<needleman_wunsch_cuda_t, gpu_specs_t>(
                         env, results_linear_global_accelerated, {blosum62_matrix, blosum62_linear_cost}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -325,7 +326,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
         scramble_accelerated_results(results_linear_global_accelerated);
 
         bench_unary(env, "smith_waterman_cuda:batch"s + std::to_string(batch_size), call_linear_local_baseline,
-                    similarities_callable<smith_waterman_cuda_t, sz::gpu_specs_t>(
+                    similarities_callable<smith_waterman_cuda_t, gpu_specs_t>(
                         env, results_linear_local_accelerated, {blosum62_matrix, blosum62_linear_cost}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -334,7 +335,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
 
         bench_unary(env, "affine_needleman_wunsch_cuda:batch"s + std::to_string(batch_size),
                     call_affine_global_baseline,
-                    similarities_callable<affine_needleman_wunsch_cuda_t, sz::gpu_specs_t>(
+                    similarities_callable<affine_needleman_wunsch_cuda_t, gpu_specs_t>(
                         env, results_affine_global_accelerated, {blosum62_matrix, blosum62_affine_cost}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -342,7 +343,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
         scramble_accelerated_results(results_affine_global_accelerated);
 
         bench_unary(env, "affine_smith_waterman_cuda:batch"s + std::to_string(batch_size), call_affine_local_baseline,
-                    similarities_callable<affine_smith_waterman_cuda_t, sz::gpu_specs_t>(
+                    similarities_callable<affine_smith_waterman_cuda_t, gpu_specs_t>(
                         env, results_affine_local_accelerated, {blosum62_matrix, blosum62_affine_cost}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -352,7 +353,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
 
 #if SZ_USE_HOPPER
         bench_unary(env, "needleman_wunsch_hopper:batch"s + std::to_string(batch_size), call_linear_global_baseline,
-                    similarities_callable<needleman_wunsch_hopper_t, sz::gpu_specs_t>(
+                    similarities_callable<needleman_wunsch_hopper_t, gpu_specs_t>(
                         env, results_linear_global_accelerated, {blosum62_matrix, blosum62_linear_cost}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -360,7 +361,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
         scramble_accelerated_results(results_linear_global_accelerated);
 
         bench_unary(env, "smith_waterman_hopper:batch"s + std::to_string(batch_size), call_linear_local_baseline,
-                    similarities_callable<smith_waterman_hopper_t, sz::gpu_specs_t>(
+                    similarities_callable<smith_waterman_hopper_t, gpu_specs_t>(
                         env, results_linear_local_accelerated, {blosum62_matrix, blosum62_linear_cost}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -369,7 +370,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
 
         bench_unary(env, "affine_needleman_wunsch_hopper:batch"s + std::to_string(batch_size),
                     call_affine_global_baseline,
-                    similarities_callable<affine_needleman_wunsch_hopper_t, sz::gpu_specs_t>(
+                    similarities_callable<affine_needleman_wunsch_hopper_t, gpu_specs_t>(
                         env, results_affine_global_accelerated, {blosum62_matrix, blosum62_affine_cost}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -377,7 +378,7 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
         scramble_accelerated_results(results_affine_global_accelerated);
 
         bench_unary(env, "affine_smith_waterman_hopper:batch"s + std::to_string(batch_size), call_affine_local_baseline,
-                    similarities_callable<affine_smith_waterman_hopper_t, sz::gpu_specs_t>(
+                    similarities_callable<affine_smith_waterman_hopper_t, gpu_specs_t>(
                         env, results_affine_local_accelerated, {blosum62_matrix, blosum62_affine_cost}, specs),
                     callable_no_op_t {},        // preprocessing
                     similarities_equality_t {}) // equality check
@@ -390,5 +391,5 @@ void bench_needleman_wunsch_smith_waterman(environment_t const &env) {
 #pragma endregion
 
 } // namespace scripts
-} // namespace stringzilla
+} // namespace stringzillas
 } // namespace ashvardanian

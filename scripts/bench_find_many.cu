@@ -1,17 +1,13 @@
 /**
- *  @file   bench_similarity.cpp
- *  @brief  Benchmarks string similarity computations.
- *          It accepts a file with a list of words, and benchmarks the levenshtein edit-distance computations,
- *          alignment scores, and fingerprinting techniques combined with the Hamming distance.
+ *  @file   bench_find_many.cu
+ *  @brief  Benchmarks for exact multi-pattern substring search algorithms on the GPU.
+ *          The program accepts a file path to a dataset, tokenizes it, and benchmarks the search operations,
+ *          validating the SIMD-accelerated backends against the serial baselines.
  *
  *  Benchmarks include:
- *  - Linear-complexity basic & bounded Hamming distance computations.
- *  - Quadratic-complexity basic & bounded Levenshtein edit-distance computations.
- *  - Quadratic-complexity Needleman-Wunsch alignment scores for bioinformatics.
- *
- *  For Dynamic Programming algorithms, the number of operations per second are reported as the worst-case time
- *  complexity of the Cells Updates Per Second @b (CUPS) metric, meaning O(N*M) for a pair of strings with N and M
- *  characters, respectively.
+ *  - Multi-pattern substring match counting.
+ *  - Multi-pattern substring search.
+ *  - Multi-pattern matcher construction time.
  *
  *  Instead of CLI arguments, for compatibility with @b StringWa.rs, the following environment variables are used:
  *  - `STRINGWARS_DATASET` : Path to the dataset file.
@@ -30,8 +26,8 @@
  *
  *  @code{.sh}
  *  cmake -D STRINGZILLA_BUILD_BENCHMARK=1 -D CMAKE_BUILD_TYPE=Release -B build_release
- *  cmake --build build_release --config Release --target stringzillas_bench_similarity_cu20
- *  STRINGWARS_DATASET=xlsum.csv STRINGWARS_TOKENS=words build_release/stringzillas_bench_similarity_cu20
+ *  cmake --build build_release --config Release --target stringzillas_bench_find_many_cu20
+ *  STRINGWARS_DATASET=leipzig1M.txt STRINGWARS_TOKENS=words build_release/stringzillas_bench_find_many_cu20
  *  @endcode
  *
  *  Alternatively, if you really want to stress-test a very specific function on a certain size inputs,
@@ -39,15 +35,15 @@
  *  your last command may look like:
  *
  *  @code{.sh}
- *  STRINGWARS_DATASET=proteins.txt STRINGWARS_TOKENS=64 STRINGWARS_FILTER=skylake
+ *  STRINGWARS_DATASET=leipzig1M.txt STRINGWARS_TOKENS=64 STRINGWARS_FILTER=skylake
  *  STRINGWARS_STRESS=1 STRINGWARS_STRESS_DURATION=120 STRINGWARS_STRESS_DIR=logs
- *  build_release/stringzillas_bench_similarity_cu20
+ *  build_release/stringzillas_bench_find_many_cu20
  *  @endcode
  *
  *  Unlike the full-blown StringWa.rs, it doesn't use any external frameworks like Criterion or Google Benchmark.
- *  This file is the sibling of `bench_find.cpp`, `bench_token.cpp`, `bench_sequence.cpp`, and `bench_memory.cpp`.
+ *  This file is the sibling of `bench_sequence.cpp`, `bench_token.cpp`, `bench_similarity.cpp`, and `bench_memory.cpp`.
  */
-#include "bench_similarity.cuh"
+#include "bench_find_many.cuh"
 
 namespace szs = ashvardanian::stringzillas;
 using namespace szs::scripts;
@@ -60,11 +56,10 @@ int main(int argc, char const **argv) {
         environment_t env = build_environment( //
             argc, argv,                        //
             "xlsum.csv",                       // Preferred for UTF-8 content
-            environment_t::tokenization_t::lines_k);
+            environment_t::tokenization_t::words_k);
 
-        std::printf("Starting string similarity benchmarks...\n");
-        bench_levenshtein(env);
-        bench_needleman_wunsch_smith_waterman(env);
+        std::printf("Starting string multi-pattern search benchmarks...\n");
+        bench_find_many(env);
     }
     catch (std::exception const &e) {
         std::fprintf(stderr, "Failed with: %s\n", e.what());

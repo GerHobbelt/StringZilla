@@ -52,7 +52,7 @@
 #include "stringzilla/stringzilla.hpp"
 
 #if SZ_USE_CUDA
-#include "stringcuzilla/types.cuh" // `unified_alloc`
+#include "stringzillas/types.cuh" // `unified_alloc`
 #endif
 
 #include "test_stringzilla.hpp" // `read_file`
@@ -188,8 +188,10 @@ static void do_not_optimize(argument_type &&value) noexcept {
     // Use the `volatile` keyword and a memory barrier to prevent optimization
     volatile plain_type *p = &value;
     _ReadWriteBarrier();
-#else // Other compilers (GCC, Clang, etc.)
-    __asm__ __volatile__("" : "+g"(value) : : "memory");
+#elif defined(__clang__)
+    asm volatile("" : "+r,m"(value) : : "memory");
+#else // GCC
+    asm volatile("" : "+m,r"(value) : : "memory");
 #endif
 }
 
@@ -209,9 +211,9 @@ using dataset_t = std::string;
 using token_view_t = std::string_view;
 using tokens_t = std::vector<token_view_t>;
 #else
-using dataset_t = std::basic_string<char, std::char_traits<char>, sz::unified_alloc<char>>;
-using token_view_t = sz::span<char const>;
-using tokens_t = std::vector<token_view_t, sz::unified_alloc<token_view_t>>;
+using dataset_t = std::basic_string<char, std::char_traits<char>, stringzillas::unified_alloc<char>>;
+using token_view_t = stringzilla::span<char const>;
+using tokens_t = std::vector<token_view_t, stringzillas::unified_alloc<token_view_t>>;
 #endif
 
 /**

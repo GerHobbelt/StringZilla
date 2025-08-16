@@ -183,9 +183,9 @@
     "STL",
     "strided",
     "StringWa.rs",
-    "STRINGWARS",
+    "StringWars",
     "stringzilla",
-    "stringzilla_bare",
+    "stringzillas",
     "Strs",
     "strzl",
     "substr",
@@ -349,6 +349,7 @@
     "__availability": "cpp",
     "barrier": "cpp",
     "pipeline": "cpp",
-    "__functional_03": "cpp"
+    "__functional_03": "cpp",
+    "__functional_base_03": "cpp"
   }
 }
