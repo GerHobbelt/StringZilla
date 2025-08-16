@@ -8,10 +8,10 @@
 #define FU_ENABLE_NUMA 0
 #include <fork_union.hpp> // Fork-join scoped thread pool
 
-#include <stringzillas/find_many.hpp> // C++ templates for string processing
+#include "../../stringzilla/drafts/find_many.hpp" // C++ templates for string processing
 
 #if SZ_USE_CUDA
-#include <stringzillas/find_many.cuh> // Parallel string processing in CUDA
+#include "../../stringzilla/drafts/find_many.cuh" // Parallel string processing in CUDA
 #endif
 
 #include "bench.hpp"
