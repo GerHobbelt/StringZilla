@@ -106,7 +106,7 @@
  */
 #if defined(__NVCC__)
 #define SZ_HAS_CONCEPTS_ 0
-#elif defined(__cpp_concepts)
+#elif defined(__cpp_concepts) && (!defined(_MSC_VER) || (_MSC_VER > 1944)) // fix: E2784: static assertion failed, plus a lot more...
 #define SZ_HAS_CONCEPTS_ 1
 #else
 #define SZ_HAS_CONCEPTS_ 0
