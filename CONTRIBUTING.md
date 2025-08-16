@@ -34,9 +34,10 @@ They have the broadest coverage of the library, and are the most important to ke
 
 - `scripts/bench_token.cpp` - token-level ops, like hashing, ordering, equality checks.
 - `scripts/bench_find.cpp` - bidirectional substring search, both exact and fuzzy.
-- `scripts/bench_similarity.cpp` - benchmark all edit distance backends.
 - `scripts/bench_sequence.cpp` - sorting, partitioning, merging.
 - `scripts/bench_container.cpp` - STL containers with different string keys.
+- `scripts/bench_similarity.cpp` - benchmark all edit distance backends.
+- `scripts/bench_fingerprint.cpp` - benchmark all Min-Hash fingerprinting backends.
 
 The role of Python benchmarks is less to provide absolute number, but to compare against popular tools in the Python ecosystem.
 
@@ -166,7 +167,7 @@ I'd recommend putting the following breakpoints:
 - `__asan::ReportGenericError` - to detect illegal memory accesses.
 - `__GI_exit` - to stop at exit points - the end of running any executable.
 - `__builtin_unreachable` - to catch unexpected code paths.
-- `_sz_assert_failure` - to catch StringZilla logic assertions.
+- `sz_assert_failure_` - to catch StringZilla logic assertions.
 
 ### Benchmarking
 
@@ -196,7 +197,7 @@ Let's say you want to benchmark large-batch DNA similarity scoring kernels:
 
 ```sh
 cmake -D STRINGZILLA_BUILD_BENCHMARK=1 -B build_release
-cmake --build build_release --config Release --target stringzillas_bench_similarity_cpp20    # CPU
+cmake --build build_release --config Release --target stringzillas_bench_fingerprint_cpp20   # CPU
 cmake --build build_release --config Release --target stringzillas_bench_similarity_cu20     # GPU
 STRINGWARS_FILTER=32768 STRINGWARS_DATASET="acgt_1k.txt" build_release/stringzillas_bench_similarity_cpp20
 STRINGWARS_FILTER=1 STRINGWARS_DATASET="acgt_100k.txt" build_release/stringzillas_bench_similarity_cu20
@@ -415,9 +416,9 @@ Python bindings are implemented using pure CPython, so you wouldn't need to inst
 Still, you need a virtual environment, and it's recommended to use `uv` to create one.
 
 ```bash
-uv venv --python 3.11           # Or your preferred Python version
-source .venv/bin/activate       # To activate the virtual environment
-pip install -e .                # To build locally from source
+uv venv --python 3.11                   # or your preferred Python version
+source .venv/bin/activate               # to activate the virtual environment
+uv pip install -e . --force-reinstall   # to build locally from source
 ```
 
 ### Testing
@@ -425,8 +426,10 @@ pip install -e .                # To build locally from source
 For testing we use PyTest, which may not be installed on your system.
 
 ```bash
-pip install pytest numpy        # NumPy is optional, but recommended
-pytest scripts/test.py -s -x    # Runs tests printing logs and stops on the first failure
+uv pip install pytest pytest-repeat numpy pyarrow                                       # for repeated fuzzy tests
+uv run --no-project python -m pytest scripts/test_stringzilla.py                        # to run with default settings
+uv run --no-project python -m pytest scripts/test_stringzilla.py -s -x -p no:warnings   # to pass custom settings
+uv run --no-project python -c 'from stringzilla import hash as sz_hash; print(sz_hash("abc", 100))'
 ```
 
 StringZilla for Python seems to cover more OS and hardware combinations, than NumPy.

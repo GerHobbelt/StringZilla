@@ -36,21 +36,19 @@
 #endif
 
 #if !SZ_AVOID_STL
-#include <array>
-#include <bitset>
-#include <string>
-#include <vector>
-#if _SZ_IS_CPP17 && __cpp_lib_string_view
-#include <string_view>
-#endif
-#endif
-
 #include <cassert>   // `assert`
 #include <cstddef>   // `std::size_t`
 #include <cstdint>   // `std::int8_t`
 #include <iosfwd>    // `std::basic_ostream`
 #include <stdexcept> // `std::out_of_range`
-#include <utility>   // `std::swap`
+#include <array>     // `std::array`
+#include <bitset>    // `std::bitset`
+#include <string>    // `std::string`
+#include <vector>    // `std::vector`
+#if SZ_IS_CPP17_ && __cpp_lib_string_view
+#include <string_view> // `std::string_view`
+#endif
+#endif
 
 #include <stringzilla/stringzilla.h>
 
@@ -269,14 +267,14 @@ class basic_byteset {
     }
     explicit sz_constexpr_if_cpp14 basic_byteset(std::initializer_list<char_type> chars) noexcept : basic_byteset() {
         // ! Instead of relying on the `sz_byteset_add(&bitset_, c)`, we have to reimplement it to support `constexpr`.
-        for (auto c : chars) bitset_._u64s[sz_bitcast(sz_u8_t, c) >> 6] |= (1ull << (sz_bitcast(sz_u8_t, c) & 63u));
+        for (auto c : chars) bitset_._u64s[sz_bitcast_(sz_u8_t, c) >> 6] |= (1ull << (sz_bitcast_(sz_u8_t, c) & 63u));
     }
 
     explicit sz_constexpr_if_cpp14 basic_byteset(char_type const *chars, std::size_t count_characters) noexcept
         : basic_byteset() {
         for (std::size_t i = 0; i < count_characters; ++i) {
             char_type c = chars[i];
-            bitset_._u64s[sz_bitcast(sz_u8_t, c) >> 6] |= (1ull << (sz_bitcast(sz_u8_t, c) & 63u));
+            bitset_._u64s[sz_bitcast_(sz_u8_t, c) >> 6] |= (1ull << (sz_bitcast_(sz_u8_t, c) & 63u));
         }
     }
 
@@ -286,7 +284,7 @@ class basic_byteset {
         static_assert(count_characters > 0, "Character array cannot be empty");
         for (std::size_t i = 0; i < count_characters; ++i) {
             char_type c = chars[i];
-            bitset_._u64s[sz_bitcast(sz_u8_t, c) >> 6] |= (1ull << (sz_bitcast(sz_u8_t, c) & 63u));
+            bitset_._u64s[sz_bitcast_(sz_u8_t, c) >> 6] |= (1ull << (sz_bitcast_(sz_u8_t, c) & 63u));
         }
     }
 
@@ -304,7 +302,7 @@ class basic_byteset {
     }
 
     inline basic_byteset &add(char_type c) noexcept {
-        sz_byteset_add(&bitset_, sz_bitcast(sz_u8_t, c));
+        sz_byteset_add(&bitset_, sz_bitcast_(sz_u8_t, c));
         return *this;
     }
     inline std::size_t size() const noexcept {
@@ -314,7 +312,7 @@ class basic_byteset {
     }
     inline sz_byteset_t &raw() noexcept { return bitset_; }
     inline sz_byteset_t const &raw() const noexcept { return bitset_; }
-    inline bool contains(char_type c) const noexcept { return sz_byteset_contains(&bitset_, sz_bitcast(sz_u8_t, c)); }
+    inline bool contains(char_type c) const noexcept { return sz_byteset_contains(&bitset_, sz_bitcast_(sz_u8_t, c)); }
     inline basic_byteset inverted() const noexcept {
         basic_byteset result = *this;
         sz_byteset_invert(&result.bitset_);
@@ -379,8 +377,8 @@ class basic_look_up_table {
     }
 
     inline sz_cptr_t raw() const noexcept { return reinterpret_cast<sz_cptr_t>(&lut_[0]); }
-    inline char_type &operator[](char_type c) noexcept { return lut_[sz_bitcast(unsigned_type_, c)]; }
-    inline char_type const &operator[](char_type c) const noexcept { return lut_[sz_bitcast(unsigned_type_, c)]; }
+    inline char_type &operator[](char_type c) noexcept { return lut_[sz_bitcast_(unsigned_type_, c)]; }
+    inline char_type const &operator[](char_type c) const noexcept { return lut_[sz_bitcast_(unsigned_type_, c)]; }
 };
 
 using look_up_table = basic_look_up_table<char>;
@@ -393,7 +391,7 @@ struct end_sentinel_type {};
 struct include_overlaps_type {};
 struct exclude_overlaps_type {};
 
-#if _SZ_IS_CPP17
+#if SZ_IS_CPP17_
 inline static constexpr end_sentinel_type end_sentinel;
 inline static constexpr include_overlaps_type include_overlaps;
 inline static constexpr exclude_overlaps_type exclude_overlaps;
@@ -413,7 +411,7 @@ struct matcher_find {
     size_type operator()(string_type_ haystack) const noexcept { return haystack.find(needle_); }
     size_type skip_length() const noexcept {
         // TODO: Apply Galil rule to match repetitive patterns in strictly linear time.
-        return std::is_same<overlaps_type, include_overlaps_type>() ? 1 : needle_.length();
+        return is_same_type<overlaps_type, include_overlaps_type>::value ? 1 : needle_.length();
     }
 };
 
@@ -431,7 +429,7 @@ struct matcher_rfind {
     size_type operator()(string_type_ haystack) const noexcept { return haystack.rfind(needle_); }
     size_type skip_length() const noexcept {
         // TODO: Apply Galil rule to match repetitive patterns in strictly linear time.
-        return std::is_same<overlaps_type, include_overlaps_type>() ? 1 : needle_.length();
+        return is_same_type<overlaps_type, include_overlaps_type>::value ? 1 : needle_.length();
     }
 };
 
@@ -1239,7 +1237,10 @@ class basic_string_slice {
     basic_string_slice(std::nullptr_t) = delete;
 
     /**  @brief Exchanges the view with that of the `other`. */
-    void swap(string_slice &other) noexcept { std::swap(start_, other.start_), std::swap(length_, other.length_); }
+    void swap(string_slice &other) noexcept {
+        trivial_swap(start_, other.start_);
+        trivial_swap(length_, other.length_);
+    }
 
 #if !SZ_AVOID_STL
 
@@ -1273,7 +1274,7 @@ class basic_string_slice {
         return os.write(str.data(), str.size());
     }
 
-#if _SZ_IS_CPP17 && __cpp_lib_string_view
+#if SZ_IS_CPP17_ && __cpp_lib_string_view
 
     template <typename sfinae_ = char_type, typename std::enable_if<std::is_const<sfinae_>::value, int>::type = 0>
     sz_constexpr_if_cpp20 basic_string_slice(std::string_view const &other) noexcept
@@ -1512,7 +1513,7 @@ class basic_string_slice {
                sz_equal(data() + other.first.size(), other.second.data(), other.second.size()) == sz_true_k;
     }
 
-#if _SZ_IS_CPP20
+#if SZ_IS_CPP20_
 
     /**  @brief Computes the lexicographic ordering between this and the ::other string. */
     std::strong_ordering operator<=>(string_view other) const noexcept {
@@ -2087,7 +2088,7 @@ class basic_string {
      *  @brief  The number of characters that can be stored in the internal buffer.
      *          Depends on the size of the internal buffer for the "Small String Optimization".
      */
-    static constexpr size_type min_capacity = _SZ_STRING_INTERNAL_SPACE - 1;
+    static constexpr size_type min_capacity = SZ_STRING_INTERNAL_SPACE - 1;
 
 #pragma region Constructors and STL Utilities
 
@@ -2160,7 +2161,7 @@ class basic_string {
 
     /**  @brief Exchanges the string contents witt the `other` string. */
     void swap(basic_string &other) noexcept {
-        // If at least one of the strings is on the stack, a basic `std::swap(string_, other.string_)` won't work,
+        // If at least one of the strings is on the stack, a basic `swap(string_, other.string_)` won't work,
         // as the pointer to the stack-allocated memory will be swapped, instead of the contents.
         sz_ptr_t first_start, second_start;
         sz_size_t first_length, second_length;
@@ -2168,7 +2169,7 @@ class basic_string {
         sz_bool_t first_is_external, second_is_external;
         sz_string_unpack(&string_, &first_start, &first_length, &first_space, &first_is_external);
         sz_string_unpack(&other.string_, &second_start, &second_length, &second_space, &second_is_external);
-        std::swap(string_, other.string_);
+        trivial_swap(string_, other.string_);
         if (!first_is_external) other.string_.internal.start = &other.string_.internal.chars[0];
         if (!second_is_external) string_.internal.start = &string_.internal.chars[0];
     }
@@ -2192,7 +2193,7 @@ class basic_string {
         return os.write(str.data(), str.size());
     }
 
-#if _SZ_IS_CPP17 && __cpp_lib_string_view
+#if SZ_IS_CPP17_ && __cpp_lib_string_view
 
     basic_string(std::string_view other) noexcept(false) : basic_string(other.data(), other.size()) {}
     basic_string &operator=(std::string_view other) noexcept(false) { return assign({other.data(), other.size()}); }
@@ -2446,7 +2447,7 @@ class basic_string {
     bool operator==(string_view other) const noexcept { return view() == other; }
     bool operator==(const_pointer other) const noexcept { return view() == string_view(other); }
 
-#if _SZ_IS_CPP20
+#if SZ_IS_CPP20_
 
     /**  @brief Computes the lexicographic ordering between this and the @p other string. */
     std::strong_ordering operator<=>(basic_string const &other) const noexcept { return view() <=> other.view(); }
@@ -3566,7 +3567,7 @@ bool basic_string<char_type_, allocator_>::try_replace_all_(pattern_type pattern
     // 1. The pattern and the replacement are of the same length. Piece of cake!
     // 2. The pattern is longer than the replacement. We need to compact the strings.
     // 3. The pattern is shorter than the replacement. We may have to allocate more memory.
-    using matcher_type = typename std::conditional<std::is_same<pattern_type, byteset>::value,
+    using matcher_type = typename std::conditional<is_same_type<pattern_type, byteset>::value,
                                                    matcher_find_first_of<string_view, pattern_type>,
                                                    matcher_find<string_view, exclude_overlaps_type>>::type;
     matcher_type matcher({pattern});
@@ -3612,7 +3613,7 @@ bool basic_string<char_type_, allocator_>::try_replace_all_(pattern_type pattern
 
     // 3. The pattern is shorter than the replacement. We may have to allocate more memory.
     else {
-        using rmatcher_type = typename std::conditional<std::is_same<pattern_type, byteset>::value,
+        using rmatcher_type = typename std::conditional<is_same_type<pattern_type, byteset>::value,
                                                         matcher_find_last_of<string_view, pattern_type>,
                                                         matcher_rfind<string_view, exclude_overlaps_type>>::type;
         using rmatches_type = range_rmatches<string_view, rmatcher_type>;

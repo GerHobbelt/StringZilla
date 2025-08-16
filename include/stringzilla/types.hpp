@@ -34,34 +34,34 @@
  *  This will affect recent features like `operator<=>` and tests against STL.
  */
 #if __cplusplus >= 202101L
-#define _SZ_IS_CPP23 1
+#define SZ_IS_CPP23_ 1
 #else
-#define _SZ_IS_CPP23 0
+#define SZ_IS_CPP23_ 0
 #endif
 #if __cplusplus >= 202002L
-#define _SZ_IS_CPP20 1
+#define SZ_IS_CPP20_ 1
 #else
-#define _SZ_IS_CPP20 0
+#define SZ_IS_CPP20_ 0
 #endif
 #if __cplusplus >= 201703L
-#define _SZ_IS_CPP17 1
+#define SZ_IS_CPP17_ 1
 #else
-#define _SZ_IS_CPP17 0
+#define SZ_IS_CPP17_ 0
 #endif
 #if __cplusplus >= 201402L
-#define _SZ_IS_CPP14 1
+#define SZ_IS_CPP14_ 1
 #else
-#define _SZ_IS_CPP14 0
+#define SZ_IS_CPP14_ 0
 #endif
 #if __cplusplus >= 201103L
-#define _SZ_IS_CPP11 1
+#define SZ_IS_CPP11_ 1
 #else
-#define _SZ_IS_CPP11 0
+#define SZ_IS_CPP11_ 0
 #endif
 #if __cplusplus >= 199711L
-#define _SZ_IS_CPP98 1
+#define SZ_IS_CPP98_ 1
 #else
-#define _SZ_IS_CPP98 0
+#define SZ_IS_CPP98_ 0
 #endif
 
 /**
@@ -74,27 +74,27 @@
  *  - C++17: Added the `if constexpr` construct for compile-time branching.
  *  - C++20: Added some dynamic memory allocations, `virtual` functions, and `try`/`catch` blocks.
  */
-#if _SZ_IS_CPP14
+#if SZ_IS_CPP14_
 #define sz_constexpr_if_cpp14 constexpr
 #else
 #define sz_constexpr_if_cpp14
 #endif
-#if _SZ_IS_CPP20
+#if SZ_IS_CPP20_
 #define sz_constexpr_if_cpp20 constexpr
 #else
 #define sz_constexpr_if_cpp20
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
-#define SZ_FORCE_INLINE inline __attribute__((always_inline))
+#define SZ_INLINE inline __attribute__((always_inline))
 #else
-#define SZ_FORCE_INLINE inline
+#define SZ_INLINE inline
 #endif
 
 #if !SZ_AVOID_STL
 #include <initializer_list> // `std::initializer_list` is only ~100 LOC
 #include <iterator>         // `std::random_access_iterator_tag` pulls 20K LOC
-#include <type_traits>      // `std::is_same`, `std::enable_if`, etc.
+#include <type_traits>      // `is_same_type`, `std::enable_if`, etc.
 #include <memory>           // `std::allocator_traits`
 #endif
 
@@ -111,6 +111,9 @@ using i64_t = sz_i64_t;
 using size_t = sz_size_t;
 using ssize_t = sz_ssize_t;
 using byte_t = sz_byte_t;
+
+using f32_t = float;
+using f64_t = double;
 
 using ptr_t = sz_ptr_t;
 using cptr_t = sz_cptr_t;
@@ -156,9 +159,11 @@ struct span {
     constexpr span() noexcept = default;
     constexpr span(value_type *data) noexcept : data_(data) {}
     sz_constexpr_if_cpp14 span(value_type *data, size_type size) noexcept : data_(data) {
-        _sz_assert(extent == size && "The second argument is only intended for compatibility");
-        sz_unused(size);
+        sz_assert_(extent == size && "The second argument is only intended for compatibility");
+        sz_unused_(size);
     }
+
+    sz_constexpr_if_cpp14 explicit operator bool() const noexcept { return data_ != nullptr; }
 
     constexpr value_type *begin() const noexcept { return data_; }
     constexpr value_type *end() const noexcept { return data_ + extent; }
@@ -184,7 +189,7 @@ struct span {
     }
 
     sz_constexpr_if_cpp14 span<value_type, SZ_SIZE_MAX> subspan(size_type offset, size_type count) const noexcept {
-        _sz_assert(offset + count <= extent && "Subspan out of bounds");
+        sz_assert_(offset + count <= extent && "Subspan out of bounds");
         return span<value_type, SZ_SIZE_MAX>(data_ + offset, count);
     }
 };
@@ -202,6 +207,8 @@ struct span<value_type_, SZ_SIZE_MAX> {
     constexpr span() noexcept = default;
     constexpr span(value_type *data, size_type size) noexcept : data_(data), size_(size) {}
     constexpr span(value_type *data, value_type *end) noexcept : data_(data), size_(end - data) {}
+
+    sz_constexpr_if_cpp14 explicit operator bool() const noexcept { return data_ != nullptr; }
 
     constexpr value_type *begin() const noexcept { return data_; }
     constexpr value_type *end() const noexcept { return data_ + size_; }
@@ -227,7 +234,7 @@ struct span<value_type_, SZ_SIZE_MAX> {
     }
 
     sz_constexpr_if_cpp14 span subspan(size_type offset, size_type count) const noexcept {
-        _sz_assert(offset + count <= size_ && "Subspan out of bounds");
+        sz_assert_(offset + count <= size_ && "Subspan out of bounds");
         return span(data_ + offset, count);
     }
 };
@@ -316,34 +323,34 @@ struct indexed_container_iterator {
     };
 
     constexpr proxy operator->() const noexcept { return proxy(operator*()); }
-    constexpr indexed_container_iterator &operator++() noexcept {
+    sz_constexpr_if_cpp14 indexed_container_iterator &operator++() noexcept {
         ++index_;
         return *this;
     }
 
-    constexpr indexed_container_iterator operator++(int) noexcept {
+    sz_constexpr_if_cpp14 indexed_container_iterator operator++(int) noexcept {
         indexed_container_iterator temp = *this;
         ++index_;
         return temp;
     }
 
-    constexpr indexed_container_iterator &operator--() noexcept {
+    sz_constexpr_if_cpp14 indexed_container_iterator &operator--() noexcept {
         --index_;
         return *this;
     }
 
-    constexpr indexed_container_iterator operator--(int) noexcept {
+    sz_constexpr_if_cpp14 indexed_container_iterator operator--(int) noexcept {
         indexed_container_iterator temp = *this;
         --index_;
         return temp;
     }
 
-    constexpr indexed_container_iterator &operator+=(difference_type n) noexcept {
+    sz_constexpr_if_cpp14 indexed_container_iterator &operator+=(difference_type n) noexcept {
         index_ += n;
         return *this;
     }
 
-    constexpr indexed_container_iterator &operator-=(difference_type n) noexcept {
+    sz_constexpr_if_cpp14 indexed_container_iterator &operator-=(difference_type n) noexcept {
         index_ -= n;
         return *this;
     }
@@ -447,7 +454,7 @@ struct arrow_strings_tape {
     using iterator_t = indexed_container_iterator<self_t>;
     using iterator = iterator_t; // ? For STL compatibility
 
-#if _SZ_IS_CPP17 && (!defined(_MSC_VER) || (_MSC_VER > 1944))
+#if _SZ_IS_CPP17_ && (!defined(_MSC_VER) || (_MSC_VER > 1944))
     using char_alloc_t = typename std::allocator_traits<allocator_t>::rebind_alloc<char_t>;
     using offset_alloc_t = typename std::allocator_traits<allocator_t>::rebind_alloc<offset_t>;
 #else
@@ -577,8 +584,8 @@ struct arrow_strings_tape {
         return status_t::success_k;
     }
 
-    constexpr value_type operator[](size_t i) const noexcept {
-        _sz_assert(i < count_ && "Index out of bounds");
+    sz_constexpr_if_cpp14 value_type operator[](size_t i) const noexcept {
+        sz_assert_(i < count_ && "Index out of bounds");
         return {buffer_.data_ + offsets_.data_[i], offsets_.data_[i + 1] - offsets_.data_[i] - 1};
     }
 
@@ -606,35 +613,35 @@ struct constant_iterator {
     constexpr reference operator*() const { return value_; }
     constexpr pointer operator->() const { return &value_; }
 
-    constexpr constant_iterator &operator++() {
+    sz_constexpr_if_cpp14 constant_iterator &operator++() {
         ++pos_;
         return *this;
     }
-    constexpr constant_iterator operator++(int) {
+    sz_constexpr_if_cpp14 constant_iterator operator++(int) {
         constexpr constant_iterator tmp(*this);
         ++pos_;
         return tmp;
     }
-    constexpr constant_iterator &operator--() {
+    sz_constexpr_if_cpp14 constant_iterator &operator--() {
         --pos_;
         return *this;
     }
-    constexpr constant_iterator operator--(int) {
+    sz_constexpr_if_cpp14 constant_iterator operator--(int) {
         constexpr constant_iterator tmp(*this);
         --pos_;
         return tmp;
     }
-
-    constexpr constant_iterator operator+(difference_type n) const { return constant_iterator(value_, pos_ + n); }
-    constexpr constant_iterator &operator+=(difference_type n) {
+    sz_constexpr_if_cpp14 constant_iterator &operator+=(difference_type n) {
         pos_ += n;
         return *this;
     }
-    constexpr constant_iterator operator-(difference_type n) const { return constant_iterator(value_, pos_ - n); }
-    constexpr constant_iterator &operator-=(difference_type n) {
+    sz_constexpr_if_cpp14 constant_iterator &operator-=(difference_type n) {
         pos_ -= n;
         return *this;
     }
+
+    constexpr constant_iterator operator+(difference_type n) const { return constant_iterator(value_, pos_ + n); }
+    constexpr constant_iterator operator-(difference_type n) const { return constant_iterator(value_, pos_ - n); }
     constexpr difference_type operator-(constant_iterator const &other) const { return pos_ - other.pos_; }
 
     constexpr reference operator[](difference_type) const { return value_; }
@@ -664,14 +671,16 @@ struct random_access_range {
     constexpr begin_type_ begin() const { return begin_; }
     constexpr end_type_ end() const { return end_; }
 
-    decltype(auto) operator[](std::size_t index) const {
-        _sz_assert(index < size());
+    reference_type operator[](std::size_t index) const {
+        sz_assert_(index < size());
         return *(begin_ + index);
     }
 };
 
+#if SZ_IS_CPP17_ // ? Template deduction guides are available in C++17 and later
 template <typename begin_type_, typename end_type_>
 random_access_range(begin_type_, end_type_) -> random_access_range<begin_type_, end_type_>;
+#endif
 
 template <typename value_type_, size_t count_>
 struct safe_array {
@@ -683,192 +692,18 @@ struct safe_array {
 
     value_type data_[count_k] = {};
 
-    constexpr value_type &operator[](size_type i) noexcept { return data_[i]; }
+    sz_constexpr_if_cpp14 value_type &operator[](size_type i) noexcept { return data_[i]; }
     constexpr value_type const &operator[](size_type i) const noexcept { return data_[i]; }
     constexpr size_type size() const noexcept { return count_k; }
-    constexpr value_type *data() noexcept { return data_; }
+    sz_constexpr_if_cpp14 value_type *data() noexcept { return data_; }
     constexpr value_type const *data() const noexcept { return data_; }
-    constexpr iterator begin() noexcept { return data_; }
+    sz_constexpr_if_cpp14 iterator begin() noexcept { return data_; }
     constexpr const_iterator begin() const noexcept { return data_; }
-    constexpr iterator end() noexcept { return data_ + count_k; }
+    sz_constexpr_if_cpp14 iterator end() noexcept { return data_ + count_k; }
     constexpr const_iterator end() const noexcept { return data_ + count_k; }
-};
 
-/**
- *  @brief  Safer alternative to `std::vector`, that avoids exceptions, copy constructors,
- *          and provides alternative `try_push_back` and `try_reserve` for faulty memory allocations.
- */
-template <typename value_type_, typename allocator_type_>
-class safe_vector {
-  public:
-    using value_type = value_type_;
-    using size_type = std::size_t;
-    using allocator_type = allocator_type_;
-
-    using allocator_traits = std::allocator_traits<allocator_type>;
-    using allocated_type = typename allocator_traits::value_type;
-    static_assert(sizeof(value_type) == sizeof(allocated_type),
-                  "Allocator value type must be the same size as the vector value type");
-    static_assert(allocator_traits::propagate_on_container_move_assignment::value,
-                  "Allocator must propagate on move assignment, otherwise the move assignment won't be `noexcept`.");
-
-  private:
-    value_type *data_;
-    size_type size_;
-    size_type capacity_;
-    allocator_type alloc_;
-
-  public:
-    safe_vector() noexcept : data_(nullptr), size_(0), capacity_(0), alloc_() {}
-    safe_vector(allocator_type alloc) noexcept : data_(nullptr), size_(0), capacity_(0), alloc_(alloc) {}
-    ~safe_vector() noexcept { reset(); }
-
-    void clear() noexcept {
-        if constexpr (!std::is_trivially_destructible<value_type>::value)
-            for (size_type i = 0; i < size_; ++i) data_[i].~value_type();
-        size_ = 0;
-    }
-
-    void reset() noexcept {
-        clear();
-        if (data_) alloc_.deallocate((allocated_type *)data_, capacity_);
-        data_ = nullptr;
-        size_ = 0;
-        capacity_ = 0;
-    }
-
-    /** @warning Use `try_assign` instead to handle out-of-memory failures. */
-    safe_vector(safe_vector const &other) = delete;
-    /** @warning Use `try_assign` instead to handle out-of-memory failures. */
-    safe_vector &operator=(safe_vector const &other) = delete;
-
-    safe_vector(safe_vector &&other) noexcept
-        : data_(other.data_), size_(other.size_), capacity_(other.capacity_), alloc_(std::move(other.alloc_)) {
-        other.data_ = nullptr;
-        other.size_ = 0;
-        other.capacity_ = 0;
-    }
-
-    safe_vector &operator=(safe_vector &&other) noexcept {
-        if (this != &other) {
-            clear();
-            if (data_) alloc_.deallocate((allocated_type *)data_, capacity_);
-            data_ = other.data_;
-            size_ = other.size_;
-            capacity_ = other.capacity_;
-            alloc_ = std::move(other.alloc_);
-            other.data_ = nullptr;
-            other.size_ = 0;
-            other.capacity_ = 0;
-        }
-        return *this;
-    }
-
-    status_t try_assign(span<value_type const> const other) noexcept {
-        reset();
-
-        if (other.size() == 0) return status_t::success_k; // Nothing to do :)
-
-        // Allocate exact needed capacity
-        size_type new_cap = other.size();
-        allocated_type *raw = allocator_traits::allocate(alloc_, new_cap);
-        if (!raw) return status_t::bad_alloc_k;
-        data_ = reinterpret_cast<value_type *>(raw);
-        capacity_ = new_cap;
-
-        // Copy‐construct each element
-        if constexpr (!std::is_trivially_constructible<value_type>::value)
-            for (size_type i = 0; i < other.size(); ++i) new (data_ + i) value_type(other[i]);
-        else
-            for (size_type i = 0; i < other.size(); ++i) data_[i] = other[i];
-        size_ = other.size();
-        return status_t::success_k;
-    }
-
-    template <typename other_allocator_type_ = allocator_type>
-    status_t try_assign(safe_vector<value_type, other_allocator_type_> const &other) noexcept {
-        if constexpr (allocator_traits::propagate_on_container_copy_assignment::value) alloc_ = other.alloc_;
-        return try_assign(span<value_type>(other.data(), other.size()));
-    }
-
-    status_t try_reserve(size_type new_cap) noexcept {
-        if (new_cap <= capacity_) return status_t::success_k;
-        value_type *new_data = (value_type *)alloc_.allocate(new_cap);
-        if (!new_data) return status_t::bad_alloc_k;
-        for (size_type i = 0; i < size_; ++i) {
-            new (new_data + i) value_type(std::move(data_[i]));
-            if constexpr (!std::is_trivially_destructible<value_type>::value) data_[i].~value_type();
-        }
-        if (data_) alloc_.deallocate((allocated_type *)data_, capacity_);
-        data_ = new_data;
-        capacity_ = new_cap;
-        return status_t::success_k;
-    }
-
-    status_t try_resize(size_type new_size) noexcept {
-        if (new_size > capacity_ && try_reserve(new_size) != status_t::success_k) return status_t::bad_alloc_k;
-
-        if (new_size > size_) {
-            if constexpr (!std::is_trivially_constructible<value_type>::value)
-                for (size_type i = size_; i < new_size; ++i) new (data_ + i) value_type();
-        }
-        else if (new_size < size_) {
-            if constexpr (!std::is_trivially_destructible<value_type>::value)
-                for (size_type i = new_size; i < size_; ++i) data_[i].~value_type();
-        }
-
-        size_ = new_size;
-        return status_t::success_k;
-    }
-
-    status_t try_push_back(value_type const &val) noexcept {
-        if (size_ == capacity_) {
-            size_type new_cap = capacity_ ? capacity_ * 2 : 1;
-            if (try_reserve(new_cap) != status_t::success_k) return status_t::bad_alloc_k;
-        }
-        new (data_ + size_) value_type(val);
-        ++size_;
-        return status_t::success_k;
-    }
-
-    status_t try_push_back(value_type &&val) noexcept {
-        if (size_ == capacity_) {
-            size_type new_cap = capacity_ ? capacity_ * 2 : 1;
-            if (try_reserve(new_cap) != status_t::success_k) return status_t::bad_alloc_k;
-        }
-        new (data_ + size_) value_type(std::move(val));
-        ++size_;
-        return status_t::success_k;
-    }
-
-    status_t try_append(span<value_type const> source) noexcept {
-        size_type needed = size_ + source.size();
-        if (needed > capacity_) {
-            size_type new_cap = capacity_ ? capacity_ : 1;
-            while (new_cap < needed) new_cap *= 2;
-            if (try_reserve(new_cap) != status_t::success_k) return status_t::bad_alloc_k;
-        }
-        for (size_type i = 0; i < source.size(); ++i) new (data_ + size_ + i) value_type(source[i]);
-        size_ = needed;
-        return status_t::success_k;
-    }
-
-    value_type *begin() noexcept { return data_; }
-    value_type const *begin() const noexcept { return data_; }
-    value_type *end() noexcept { return data_ + size_; }
-    value_type const *end() const noexcept { return data_ + size_; }
-    value_type &operator[](size_type i) noexcept { return data_[i]; }
-    value_type const &operator[](size_type i) const noexcept { return data_[i]; }
-    value_type *data() noexcept { return data_; }
-    value_type const *data() const noexcept { return data_; }
-    value_type &front() noexcept { return data_[0]; }
-    value_type const &front() const noexcept { return data_[0]; }
-    value_type &back() noexcept { return data_[size_ - 1]; }
-    value_type const &back() const noexcept { return data_[size_ - 1]; }
-    size_type size() const noexcept { return size_; }
-    size_type capacity() const noexcept { return capacity_; }
-    operator span<value_type>() noexcept { return {data_, size_}; }
-    operator span<value_type const>() const noexcept { return {data_, size_}; }
+    operator span<value_type, count_k>() noexcept { return span<value_type, count_k>(data_); }
+    operator span<value_type const, count_k>() const noexcept { return span<value_type const, count_k>(data_); }
 };
 
 template <typename first_, typename second_>
@@ -881,7 +716,6 @@ struct is_same_type<first_, first_> {
 
 template <typename first_, typename second_>
 struct is_same_type {
-    static_assert(std::is_same<first_, second_>::value, "First and second types differ!");
     static constexpr bool value = false;
 };
 
@@ -937,8 +771,8 @@ struct cpu_specs_t {
  *  @note  This is equivalent to `ceil(x / divisor)`, but avoids floating-point arithmetic.
  */
 template <typename scalar_type_>
-constexpr scalar_type_ divide_round_up(scalar_type_ x, scalar_type_ divisor) {
-    _sz_assert(divisor > 0 && "Divisor must be positive");
+sz_constexpr_if_cpp14 scalar_type_ divide_round_up(scalar_type_ x, scalar_type_ divisor) {
+    sz_assert_(divisor > 0 && "Divisor must be positive");
     return (x + divisor - 1) / divisor;
 }
 
@@ -946,8 +780,8 @@ constexpr scalar_type_ divide_round_up(scalar_type_ x, scalar_type_ divisor) {
  *  @brief Rounds @p x up to the nearest multiple of @p divisor.
  */
 template <typename scalar_type_>
-constexpr scalar_type_ round_up_to_multiple(scalar_type_ x, scalar_type_ divisor) {
-    _sz_assert(divisor > 0 && "Divisor must be positive");
+sz_constexpr_if_cpp14 scalar_type_ round_up_to_multiple(scalar_type_ x, scalar_type_ divisor) {
+    sz_assert_(divisor > 0 && "Divisor must be positive");
     return divide_round_up(x, divisor) * divisor;
 }
 
@@ -955,10 +789,21 @@ constexpr scalar_type_ round_up_to_multiple(scalar_type_ x, scalar_type_ divisor
  *  @brief Equivalent to `(condition ? value : 0)`, but avoids branching.
  */
 template <typename value_type_>
-constexpr value_type_ non_zero_if(value_type_ value, value_type_ condition) noexcept {
+sz_constexpr_if_cpp14 value_type_ non_zero_if(value_type_ value, value_type_ condition) noexcept {
     static_assert(std::is_unsigned<value_type_>::value, "Value type must be unsigned integer");
-    _sz_assert((condition == 0 || condition == 1) && "Condition must be either 0 or 1 unsigned integer");
+    sz_assert_((condition == 0 || condition == 1) && "Condition must be either 0 or 1 unsigned integer");
     return value * condition;
+}
+
+/**
+ *  @brief Analog to `std::swap` from `<utility>`, but generates also device code, unlike STL.
+ */
+template <typename value_type_>
+sz_constexpr_if_cpp14 void trivial_swap(value_type_ &x, value_type_ &y) noexcept {
+    static_assert(std::is_trivially_copyable<value_type_>::value, "Value type must be trivially copyable");
+    value_type_ temp = x;
+    x = y;
+    y = temp;
 }
 
 /**
@@ -972,14 +817,14 @@ struct head_body_tail_t {
 };
 
 template <size_t elements_per_page_, typename element_type_>
-constexpr head_body_tail_t head_body_tail(element_type_ *first_address, size_t total_length) noexcept {
+sz_constexpr_if_cpp14 head_body_tail_t head_body_tail(element_type_ *first_address, size_t total_length) noexcept {
     constexpr size_t bytes_per_element = sizeof(element_type_);
     constexpr size_t bytes_per_page = elements_per_page_ * bytes_per_element;
-    static_assert(bytes_per_page > 0 && "Slice size must be positive");
+    static_assert(bytes_per_page > 0, "Slice size must be positive");
 
     // To split into head, body, and tail, we need the `first_address` to be
     // a multiple of `bytes_per_element`, otherwise the `body` will always be a zero!
-    _sz_assert((size_t)first_address % bytes_per_element == 0);
+    sz_assert_((size_t)first_address % bytes_per_element == 0);
     size_t bytes_misalignment = (size_t)first_address % bytes_per_page;
     size_t bytes_in_head = (bytes_per_page - bytes_misalignment) % bytes_per_page;
     size_t elements_in_head = bytes_in_head / bytes_per_element;
@@ -990,11 +835,11 @@ constexpr head_body_tail_t head_body_tail(element_type_ *first_address, size_t t
 
     // Tail is simply what remains:
     size_t elements_in_tail = total_length - elements_in_head - elements_in_body;
-    _sz_assert(elements_in_head < elements_per_page_ && elements_in_head <= total_length);
-    _sz_assert(elements_in_tail < elements_per_page_ && elements_in_tail <= total_length);
-    _sz_assert(elements_in_body % elements_per_page_ == 0);
+    sz_assert_(elements_in_head < elements_per_page_ && elements_in_head <= total_length);
+    sz_assert_(elements_in_tail < elements_per_page_ && elements_in_tail <= total_length);
+    sz_assert_(elements_in_body % elements_per_page_ == 0);
 
-    return {elements_in_head, elements_in_body, elements_in_tail};
+    return head_body_tail_t {elements_in_head, elements_in_body, elements_in_tail};
 }
 
 } // namespace stringzilla

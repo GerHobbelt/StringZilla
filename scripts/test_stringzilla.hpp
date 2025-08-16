@@ -113,7 +113,7 @@ inline void iterate_in_random_slices(std::string const &text, slice_callback_typ
 }
 
 struct fuzzy_config_t {
-    std::string_view alphabet = "ABC";
+    std::string alphabet = "ABC";
     std::size_t batch_size = 16;
     std::size_t min_string_length = 1;
     std::size_t max_string_length = 200;
@@ -142,7 +142,7 @@ void randomize_strings(fuzzy_config_t config, std::vector<std::string> &array, a
 
     // Convert to a GPU-friendly layout
     status_t status = tape.try_assign(array.data(), array.data() + array.size());
-    _sz_assert(status == status_t::success_k);
+    sz_assert_(status == status_t::success_k);
 }
 
 } // namespace scripts

@@ -17,7 +17,7 @@
 #include "stringzillas/fingerprint.cuh"
 #endif
 
-#if !_SZ_IS_CPP17
+#if !SZ_IS_CPP17_
 #error "This test requires C++17 or later."
 #endif
 
@@ -34,10 +34,12 @@ using namespace stringzilla::scripts;
 template <typename hasher_type_>
 void test_rolling_hasher(hasher_type_ &&hasher, std::vector<std::string> const &strs) {
 
+    using hasher_t = typename std::decay<hasher_type_>::type;
+    using state_t = typename hasher_t::state_t;
+    using hash_t = typename hasher_t::hash_t;
+
     // Let's make sure that all slice hashes are the same as rolling hashes
     std::size_t window_width = hasher.window_width();
-    using hasher_t = typename std::decay<hasher_type_>::type;
-    using hash_t = typename hasher_t::hash_t;
 
     for (std::size_t i = 0; i != strs.size(); ++i) {
         auto const &str = strs[i];
@@ -47,20 +49,83 @@ void test_rolling_hasher(hasher_type_ &&hasher, std::vector<std::string> const &
         std::size_t count_hashes = str.size() - window_width + 1;
         std::vector<hash_t> hashes(count_hashes);
         for (std::size_t j = 0; j < count_hashes; ++j) {
-            hash_t slice_hash = 0;
-            for (std::size_t k = 0; k < window_width; ++k) slice_hash = hasher.update(slice_hash, str[j + k]);
-            hashes[j] = slice_hash;
+            state_t slice_state = 0;
+            for (std::size_t k = 0; k < window_width; ++k) slice_state = hasher.push(slice_state, str[j + k]);
+            hashes[j] = hasher.digest(slice_state);
         }
 
         // Pre-populate the rolling-hash state until the first window ends
-        hash_t rolling_hash = 0;
-        for (std::size_t j = 0; j < window_width; ++j) rolling_hash = hasher.update(rolling_hash, str[j]);
-        _sz_assert(rolling_hash == hashes[0]);
+        state_t rolling_state = 0;
+        for (std::size_t j = 0; j < window_width; ++j) rolling_state = hasher.push(rolling_state, str[j]);
+        hash_t rolling_hash = hasher.digest(rolling_state);
+        sz_assert_(rolling_hash == hashes[0]);
 
         // Now compute the rolling hash and compare it to the slice hashes
         for (std::size_t j = window_width; j < str.size(); ++j) {
-            rolling_hash = hasher.update(rolling_hash, str[j - window_width], str[j]);
-            _sz_assert(rolling_hash == hashes[j - window_width + 1]);
+            rolling_state = hasher.roll(rolling_state, str[j - window_width], str[j]);
+            rolling_hash = hasher.digest(rolling_state);
+            sz_assert_(rolling_hash == hashes[j - window_width + 1]);
+        }
+    }
+}
+
+template <typename hasher_type_, typename baseline_hasher_type_>
+void test_rolling_hasher(hasher_type_ &&hasher, baseline_hasher_type_ &&baseline_hasher,
+                         std::vector<std::string> const &strs) {
+
+    using hasher_t = typename std::decay<hasher_type_>::type;
+    using state_t = typename hasher_t::state_t;
+    using hash_t = typename hasher_t::hash_t;
+
+    using baseline_hasher_t = typename std::decay<baseline_hasher_type_>::type;
+    using baseline_state_t = typename baseline_hasher_t::state_t;
+    using baseline_hash_t = typename baseline_hasher_t::hash_t;
+
+    // Let's make sure that all slice hashes are the same as rolling hashes
+    std::size_t window_width = hasher.window_width();
+
+    for (std::size_t i = 0; i != strs.size(); ++i) {
+        auto const &str = strs[i];
+        if (str.size() <= window_width) continue; // Skip very short inputs
+
+        // Compute the hash of the slice
+        std::size_t count_hashes = str.size() - window_width + 1;
+        std::vector<hash_t> hashes(count_hashes);
+        std::vector<baseline_hash_t> baseline_hashes(count_hashes);
+        for (std::size_t j = 0; j < count_hashes; ++j) {
+            state_t slice_state = 0;
+            baseline_state_t baseline_slice_state = 0;
+            for (std::size_t k = 0; k < window_width; ++k) {
+                slice_state = hasher.push(slice_state, str[j + k]);
+                baseline_slice_state = baseline_hasher.push(baseline_slice_state, str[j + k]);
+            }
+            hashes[j] = hasher.digest(slice_state);
+            baseline_hashes[j] = baseline_hasher.digest(baseline_slice_state);
+            sz_assert_(hashes[j] == baseline_hashes[j] && "Slice hashes do not match baseline hashes");
+        }
+
+        // Pre-populate the rolling-hash state until the first window ends
+        state_t rolling_state = 0;
+        baseline_state_t baseline_rolling_state = 0;
+        for (std::size_t j = 0; j < window_width; ++j) {
+            rolling_state = hasher.push(rolling_state, str[j]);
+            baseline_rolling_state = baseline_hasher.push(baseline_rolling_state, str[j]);
+        }
+        hash_t rolling_hash = hasher.digest(rolling_state);
+        baseline_hash_t baseline_rolling_hash = baseline_hasher.digest(baseline_rolling_state);
+        sz_assert_(rolling_hash == baseline_rolling_hash && "Rolling hashes do not match baseline hashes");
+
+        // Now compute the rolling hash and compare it to the slice hashes
+        for (std::size_t j = window_width; j < str.size(); ++j) {
+            rolling_state = hasher.roll(rolling_state, str[j - window_width], str[j]);
+            rolling_hash = hasher.digest(rolling_state);
+
+            baseline_rolling_state = baseline_hasher.roll(baseline_rolling_state, str[j - window_width], str[j]);
+            baseline_rolling_hash = baseline_hasher.digest(baseline_rolling_state);
+
+            sz_assert_(rolling_hash == baseline_rolling_hash && "Rolling hashes do not match baseline rolling hashes");
+            sz_assert_(rolling_hash == hashes[j - window_width + 1]);
+            sz_assert_(baseline_rolling_hash == baseline_hashes[j - window_width + 1]);
         }
     }
 }
@@ -91,19 +156,6 @@ std::vector<std::string> rolling_hasher_basic_inputs() {
     strings.emplace_back("🙂"), strings.emplace_back("☺️");                          // emoji variants
     strings.emplace_back("€100"), strings.emplace_back("EUR 100");                  // currency symbol vs abbreviation
 
-    return strings;
-}
-
-std::vector<std::string> rolling_hasher_dna_like_inputs() {
-    std::vector<std::string> strings;
-
-    fuzzy_config_t config;
-    config.alphabet = "ACGT";
-    config.batch_size = 100;
-    config.min_string_length = 100;
-    config.max_string_length = 100 * 1024;
-
-    randomize_strings(config, strings);
     return strings;
 }
 
@@ -151,6 +203,10 @@ void test_rolling_hasher() {
     using u64buz_hasher_t = buz_rolling_hasher<u64_t>;
     using f32u32_hasher_t = floating_rolling_hasher<float>;
     using f64u64_hasher_t = floating_rolling_hasher<double>;
+
+    test_rolling_hasher(f64u64_hasher_t(4, 257, 65521), u32u64_hasher_t(4, 257, 65521), unit_strings);
+    test_rolling_hasher(f64u64_hasher_t(4, 257, 65521), u32u64_hasher_t(4, 257, 65521), dna_like_strings);
+    test_rolling_hasher(f64u64_hasher_t(4, 257, 65521), u32u64_hasher_t(4, 257, 65521), inconvenient_strings);
 
     std::vector<u16u32_hasher_t> u16u32_hashers;
     u16u32_hashers.emplace_back(3, 31, 65521);
@@ -238,12 +294,12 @@ void test_rolling_hasher() {
 
     std::vector<f32u32_hasher_t> f32u32_hashers;
     f32u32_hashers.emplace_back(3, 31);
-    f32u32_hashers.emplace_back(5, 65521);
     f32u32_hashers.emplace_back(4, 257);
     f32u32_hashers.emplace_back(4, 257);
     f32u32_hashers.emplace_back(4, 257);
     f32u32_hashers.emplace_back(32, 257);
-    f32u32_hashers.emplace_back(32, 65521);
+    f32u32_hashers.emplace_back(5, 257, 7001);
+    f32u32_hashers.emplace_back(32, 71, 7001);
     f32u32_hashers.emplace_back(3);
     f32u32_hashers.emplace_back(32);
     f32u32_hashers.emplace_back(65);
@@ -256,12 +312,12 @@ void test_rolling_hasher() {
 
     std::vector<f64u64_hasher_t> f64u64_hashers;
     f64u64_hashers.emplace_back(3, 31);
-    f64u64_hashers.emplace_back(5, 65521);
+    f64u64_hashers.emplace_back(5, 31, 65521);
     f64u64_hashers.emplace_back(4, 257);
     f64u64_hashers.emplace_back(4, 257);
     f64u64_hashers.emplace_back(4, 257);
     f64u64_hashers.emplace_back(32, 257);
-    f64u64_hashers.emplace_back(32, 65521);
+    f64u64_hashers.emplace_back(32, 257, 65521);
     f64u64_hashers.emplace_back(3);
     f64u64_hashers.emplace_back(32);
     f64u64_hashers.emplace_back(65);
@@ -271,6 +327,89 @@ void test_rolling_hasher() {
     for (auto hasher : f64u64_hashers)
         test_rolling_hasher(hasher, unit_strings), test_rolling_hasher(hasher, dna_like_strings),
             test_rolling_hasher(hasher, inconvenient_strings);
+}
+
+/**
+ *  Compares the equivalence of SIMD backends to @b `floating_rolling_hashers<sz_cap_serial_k>`
+ *  and the simpler `basic_rolling_hashers<floating_rolling_hasher<double>, ..., std::uint32_t>`.
+ */
+template <std::size_t window_width_, std::size_t embedding_dims_>
+void test_rolling_hashers_equivalence_for_width() {
+
+    constexpr std::size_t embedding_dims_k = embedding_dims_;
+    constexpr std::size_t window_width_k = window_width_;
+    using fingerprint_hashes_t = safe_array<std::uint32_t, embedding_dims_k>;
+    using fingerprint_counts_t = safe_array<std::uint32_t, embedding_dims_k>;
+
+    auto test_against_baseline = [&](auto const &strings, auto const &baseline_hasher, auto const &accelerated_hasher) {
+        fingerprint_hashes_t serial_hashes, accelerated_hashes;
+        fingerprint_counts_t serial_counts, accelerated_counts;
+
+        // Compute the fingerprints
+        for (auto const &str : strings) {
+            auto bytes = to_bytes_view(str);
+            baseline_hasher.template try_fingerprint<embedding_dims_k>(bytes, serial_hashes, serial_counts);
+            accelerated_hasher.try_fingerprint(bytes, accelerated_hashes, accelerated_counts);
+
+            // Compare the results
+            std::size_t const first_mismatch_index =
+                std::mismatch(serial_hashes.begin(), serial_hashes.end(), accelerated_hashes.begin()).first -
+                serial_hashes.begin();
+
+            if (first_mismatch_index != serial_hashes.size()) {
+                std::printf("Fingerprint mismatch at index %zu:\n", first_mismatch_index);
+                std::printf("  String: \"%s\"\n", str.c_str());
+                std::printf("  Serial hash:      %u\n", serial_hashes[first_mismatch_index]);
+                std::printf("  Accelerated hash: %u\n", accelerated_hashes[first_mismatch_index]);
+                std::printf("  Serial count:     %u\n", serial_counts[first_mismatch_index]);
+                std::printf("  Accelerated count:%u\n", accelerated_counts[first_mismatch_index]);
+                for (std::size_t i = 0; i < serial_hashes.size(); ++i) {
+                    std::printf("  [%zu] serial=%u accelerated=%u\n", i, serial_hashes[i], accelerated_hashes[i]);
+                }
+            }
+            sz_assert_(first_mismatch_index == serial_hashes.size() && "Fingerprints do not match");
+        }
+    };
+
+    // Define hasher classes
+    using rolling_f64_t = basic_rolling_hashers<floating_rolling_hasher<double>, std::uint32_t>;
+    using rolling_serial_t = floating_rolling_hashers<sz_cap_serial_k, window_width_k, embedding_dims_k>;
+    using rolling_skylake_t = floating_rolling_hashers<sz_cap_skylake_k, window_width_k, embedding_dims_k>;
+
+    // Instantiate all rolling hashers
+    rolling_f64_t rolling_f64;
+    rolling_serial_t rolling_serial;
+    rolling_skylake_t rolling_skylake;
+    sz_assert_(rolling_f64.try_extend(window_width_k, embedding_dims_k) == status_t::success_k);
+    sz_assert_(rolling_serial.try_seed() == status_t::success_k);
+    sz_assert_(rolling_skylake.try_seed() == status_t::success_k);
+
+    // Test on each individual dataset
+    auto unit_strings = rolling_hasher_basic_inputs();
+    test_against_baseline(unit_strings, rolling_f64, rolling_serial);
+    test_against_baseline(unit_strings, rolling_f64, rolling_skylake);
+
+    // Now for DNA-like data
+    auto dna_like_strings = rolling_hasher_dna_like_inputs();
+    test_against_baseline(dna_like_strings, rolling_f64, rolling_serial);
+    test_against_baseline(dna_like_strings, rolling_f64, rolling_skylake);
+
+    // Finally, for inconvenient strings
+    auto inconvenient_strings = rolling_hasher_inconvenient_inputs();
+    test_against_baseline(inconvenient_strings, rolling_f64, rolling_serial);
+    test_against_baseline(inconvenient_strings, rolling_f64, rolling_skylake);
+}
+
+void test_rolling_hashers_equivalence() {
+    // Just 2 hashes per input
+    test_rolling_hashers_equivalence_for_width<3, 2>();
+    test_rolling_hashers_equivalence_for_width<7, 2>();
+
+    // 32 hashes per input
+    test_rolling_hashers_equivalence_for_width<3, 32>();
+    test_rolling_hashers_equivalence_for_width<7, 32>();
+    test_rolling_hashers_equivalence_for_width<33, 32>();
+    test_rolling_hashers_equivalence_for_width<64, 32>();
 }
 
 } // namespace scripts

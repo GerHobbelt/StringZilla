@@ -421,6 +421,22 @@ def test_unit_globals():
         "world", 0, 11
     )
 
+    assert sz.find_first_of("abcdef", "cde") == 2
+    assert sz.find_first_of("abcdef", "xyz") == -1
+    assert sz.find_first_of("hello world", "aeiou") == 1
+
+    assert sz.find_last_of("abcdef", "abc") == 2
+    assert sz.find_last_of("abcdef", "xyz") == -1
+    assert sz.find_last_of("hello world", "aeiou") == 7
+
+    assert sz.find_first_not_of("aaabbbccc", "ab") == 6
+    assert sz.find_first_not_of("abcdef", "abcdef") == -1
+    assert sz.find_first_not_of("   hello", " ") == 3
+
+    assert sz.find_last_not_of("aaabbbccc", "bc") == 2
+    assert sz.find_last_not_of("abcdef", "abcdef") == -1
+    assert sz.find_last_not_of("hello   ", " ") == 4
+
     # Compare partitioning functions
     assert sz.partition("abcdef", "c") == ("ab", "c", "def")
     assert sz.rpartition("abcdef", "c") == ("ab", "c", "def")
@@ -435,22 +451,16 @@ def test_unit_globals():
     assert sz.count("aaaaa", "aa") == 2
     assert sz.count("aaaaa", "aa", allowoverlap=True) == 4
 
-    assert sz.hamming_distance("aaa", "aaa") == 0
-    assert sz.hamming_distance("aaa", "bbb") == 3
-    assert sz.hamming_distance("abababab", "aaaaaaaa") == 4
-    assert sz.hamming_distance("abababab", "aaaaaaaa", 2) == 2
-    assert sz.hamming_distance("abababab", "aaaaaaaa", bound=2) == 2
-
-    assert sz.edit_distance("aaa", "aaa") == 0
-    assert sz.edit_distance("aaa", "bbb") == 3
-    assert sz.edit_distance("abababab", "aaaaaaaa") == 4
-    assert sz.edit_distance("abababab", "aaaaaaaa", 2) == 2
-    assert sz.edit_distance("abababab", "aaaaaaaa", bound=2) == 2
+    assert sz.bytesum("hello") > 0
+    assert sz.bytesum("hello") > sz.bytesum("hell")
 
     assert sz.translate("ABC", {"A": "X", "B": "Y", "C": "Z"}) == "XYZ"
     assert sz.translate("ABC", {"A": "X", "B": "Y"}) == "XYC"
     assert sz.translate("ABC", {"A": "X", "B": "Y"}, start=1, end=-1) == "YC"
     assert sz.translate("ABC", bytes(range(256))) == "ABC"
+
+    assert sz.split("hello world test", " ") == ["hello", "world", "test"]
+    assert sz.rsplit("hello world test", " ", 1) == ["hello world", "test"]
 
 
 def test_string_lengths():
@@ -521,38 +531,6 @@ def is_equal_strings(native_strings, big_strings):
         ), f"Mismatch between `{native_slice}` and `{str(big_slice)}`"
 
 
-@pytest.mark.skipif(not numpy_available, reason="NumPy is not installed")
-def baseline_edit_distance(s1, s2) -> int:
-    """
-    Compute the Levenshtein distance between two strings.
-    """
-
-    # Create a matrix of size (len(s1)+1) x (len(s2)+1)
-    matrix = np.zeros((len(s1) + 1, len(s2) + 1), dtype=int)
-
-    # Initialize the first column and first row of the matrix
-    for i in range(len(s1) + 1):
-        matrix[i, 0] = i
-    for j in range(len(s2) + 1):
-        matrix[0, j] = j
-
-    # Compute Levenshtein distance
-    for i in range(1, len(s1) + 1):
-        for j in range(1, len(s2) + 1):
-            if s1[i - 1] == s2[j - 1]:
-                cost = 0
-            else:
-                cost = 1
-            matrix[i, j] = min(
-                matrix[i - 1, j] + 1,  # Deletion
-                matrix[i, j - 1] + 1,  # Insertion
-                matrix[i - 1, j - 1] + cost,  # Substitution
-            )
-
-    # Return the Levenshtein distance
-    return matrix[len(s1), len(s2)]
-
-
 def check_identical(
     native: str,
     big: Str,
@@ -620,102 +598,6 @@ def test_fuzzy_substrings(pattern_length: int, haystack_length: int, variability
     assert native.find(pattern) == big.find(
         pattern
     ), f"Failed to locate {pattern} at offset {native.find(pattern)} in {native}"
-
-
-@pytest.mark.repeat(100)
-@pytest.mark.parametrize("max_edit_distance", [150])
-def test_edit_distance_insertions(max_edit_distance: int):
-    # Create a new string by slicing and concatenating
-    def insert_char_at(s, char_to_insert, index):
-        return s[:index] + char_to_insert + s[index:]
-
-    a = get_random_string(length=20)
-    b = a
-    for i in range(max_edit_distance):
-        source_offset = randint(0, len(ascii_lowercase) - 1)
-        target_offset = randint(0, len(b) - 1)
-        b = insert_char_at(b, ascii_lowercase[source_offset], target_offset)
-        assert sz.edit_distance(a, b, bound=200) == i + 1
-
-
-def test_edit_distances():
-
-    assert sz.hamming_distance("hello", "hello") == 0
-    assert sz.hamming_distance("hello", "hell") == 1
-    assert sz.hamming_distance("abc", "adc") == 1, "one substitution"
-    assert sz.hamming_distance("αβγδ", "αxxγδ") == 2, "replace Beta UTF8 codepoint"
-    assert (
-        sz.hamming_distance_unicode("abcdefgh", "_bcdefg_") == 2
-    ), "replace ASCI prefix and suffix"
-    assert (
-        sz.hamming_distance_unicode("αβγδ", "αγγδ") == 1
-    ), "replace Beta UTF8 codepoint"
-
-    assert sz.edit_distance("hello", "hello") == 0
-    assert sz.edit_distance("hello", "hell") == 1
-    assert sz.edit_distance("", "") == 0
-    assert sz.edit_distance("", "abc") == 3
-    assert sz.edit_distance("abc", "") == 3
-    assert sz.edit_distance("abc", "ac") == 1, "one deletion"
-    assert sz.edit_distance("abc", "a_bc") == 1, "one insertion"
-    assert sz.edit_distance("abc", "adc") == 1, "one substitution"
-    assert (
-        sz.edit_distance("ggbuzgjux{}l", "gbuzgjux{}l") == 1
-    ), "one insertion (prepended)"
-    assert sz.edit_distance("abcdefgABCDEFG", "ABCDEFGabcdefg") == 14
-
-    assert (
-        sz.edit_distance_unicode("hello", "hell") == 1
-    ), "no unicode symbols, just ASCII"
-    assert (
-        sz.edit_distance_unicode("𠜎 𠜱 𠝹 𠱓", "𠜎𠜱𠝹𠱓") == 3
-    ), "add 3 whitespaces in Chinese"
-    assert sz.edit_distance_unicode("💖", "💗") == 1
-
-    assert sz.edit_distance_unicode("αβγδ", "αγδ") == 1, "insert Beta"
-    assert (
-        sz.edit_distance_unicode("école", "école") == 2
-    ), "etter 'é' as a single character vs 'e' + '´'"
-    assert (
-        sz.edit_distance_unicode("façade", "facade") == 1
-    ), "'ç' with cedilla vs. plain"
-    assert (
-        sz.edit_distance_unicode("Schön", "Scho\u0308n") == 2
-    ), "'ö' represented as 'o' + '¨'"
-    assert (
-        sz.edit_distance_unicode("München", "Muenchen") == 2
-    ), "German with umlaut vs. transcription"
-    assert sz.edit_distance_unicode("こんにちは世界", "こんばんは世界") == 2
-
-
-@pytest.mark.repeat(30)
-@pytest.mark.parametrize("first_length", [20, 100])
-@pytest.mark.parametrize("second_length", [20, 100])
-@pytest.mark.skipif(not numpy_available, reason="NumPy is not installed")
-def test_edit_distance_random(first_length: int, second_length: int):
-    a = get_random_string(length=first_length)
-    b = get_random_string(length=second_length)
-    assert sz.edit_distance(a, b) == baseline_edit_distance(a, b)
-
-
-@pytest.mark.repeat(30)
-@pytest.mark.parametrize("first_length", [20, 100])
-@pytest.mark.parametrize("second_length", [20, 100])
-@pytest.mark.skipif(not numpy_available, reason="NumPy is not installed")
-def test_alignment_score_random(first_length: int, second_length: int):
-
-    a = get_random_string(length=first_length)
-    b = get_random_string(length=second_length)
-    character_substitutions = np.zeros((256, 256), dtype=np.int8)
-    character_substitutions.fill(-1)
-    np.fill_diagonal(character_substitutions, 0)
-
-    assert sz.alignment_score(
-        a,
-        b,
-        substitution_matrix=character_substitutions,
-        gap_score=-1,
-    ) == -baseline_edit_distance(a, b)
 
 
 def baseline_translate(body: str, lut: Sequence) -> str:
