@@ -217,7 +217,7 @@ static void test_memory_allocator_struct() {
         sz_memory_allocator_init_default(&alloc);
         void *byte = alloc.allocate(1, alloc.handle);
         assert(byte != nullptr);
-        alloc.free(byte, 1, alloc.handle);
+        alloc.release(byte, 1, alloc.handle);
     }
 
     // Use a fixed buffer
@@ -227,7 +227,7 @@ static void test_memory_allocator_struct() {
         sz_memory_allocator_init_fixed(&alloc, buffer, sizeof(buffer));
         void *byte = alloc.allocate(1, alloc.handle);
         assert(byte != nullptr);
-        alloc.free(byte, 1, alloc.handle);
+        alloc.release(byte, 1, alloc.handle);
     }
 }
 
