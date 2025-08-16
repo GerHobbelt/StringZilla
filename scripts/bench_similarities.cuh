@@ -78,7 +78,10 @@ struct similarities_equality_t {
         if (a_.size() != b_.size()) return false;
         for (std::size_t i = 0; i < a_.size(); ++i)
             if (a_[i] != b_[i]) {
-                std::printf("Mismatch at index %zu: %zd != %zd\n", i, a_[i], b_[i]);
+                // fix warning C4777: 'printf' : format string '%zd' requires an argument of type 'unsigned __int64', but variadic argument 2 has type 'const _Ty' with [ _Ty=sz_ssize_t ]
+                //   the sizes of types 'const _Ty' and 'unsigned __int64' might differ on other platforms.
+                //   consider using '%td' in the format string.
+                std::printf("Mismatch at index %zu: %td != %td\n", i, a_[i], b_[i]);
                 return false;
             }
         return true;
