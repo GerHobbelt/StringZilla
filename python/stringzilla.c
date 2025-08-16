@@ -15,11 +15,11 @@
  *  PyCapsule protocol in conjunction with @b `__arrow_c_array__` dunder methods can be used to extract strings.
  *  @see https://arrow.apache.org/docs/python/generated/pyarrow.array.html
  *
- *  This module exports C functions via `PyCapsule` for use by other extensions (like `stringzillas-cpus`):
- *  - sz_py_export_string_like: exported as "sz_py_export_string_like".
- *  - sz_py_export_strings_as_sequence: exported as "sz_py_export_strings_as_sequence".
- *  - sz_py_export_strings_as_u32tape: exported as "sz_py_export_strings_as_u32tape".
- *  - sz_py_export_strings_as_u64tape: exported as "sz_py_export_strings_as_u64tape".
+ *  This module exports C functions via `PyCapsule` of `PyAPI` for use by other extensions (like `stringzillas-cpus`):
+ *  - `sz_py_export_string_like`.
+ *  - `sz_py_export_strings_as_sequence`.
+ *  - `sz_py_export_strings_as_u32tape`.
+ *  - `sz_py_export_strings_as_u64tape`.
  */
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
 #define NOMINMAX
@@ -190,41 +190,41 @@ typedef struct {
         /**
          *  Simple structure resembling Apache Arrow arrays of variable length strings.
          *  When you split a `Str`, that is under 4 GB in size, this is used for space-efficiency.
-         *  The `end_offsets` contains `count`-many integers marking the end offset of part at a given
-         *  index. The length of consecutive elements can be determined as the difference in consecutive
-         *  offsets. The starting offset of the first element is zero bytes after the `start`.
-         *  Every chunk will include a separator of length `separator_length` at the end, except for the
-         *  last one.
          *
-         *  The layout isn't exactly identical to Arrow, as we have an optional separator and we have one less offset.
+         *  The `offsets` contains `count+1` integers similar to the Apache Arrow format.
+         *  The length of the i-th string is calculated as: `offsets[i+1] - offsets[i] - separator_length`.
+         *  The first offset is typically 0, unless we are looking at a slice of a larger array.
+         *
+         *  The layout is now identical to Apache Arrow format: N+1 offsets for N strings.
          *  https://arrow.apache.org/docs/format/Columnar.html#variable-size-binary-layout
          */
         struct consecutive_slices_32bit_t {
             size_t count;
             size_t separator_length;
             PyObject *parent_string;
-            char const *start;
-            uint32_t *end_offsets;
+            char const *start; // ? Ownership is controlled by presence of `parent_string`
+            uint32_t *offsets; // Apache Arrow format: N+1 offsets for N strings, starting with 0
+            int owns_offsets;  // ? 1 if we allocated `offsets` and should `free`
         } consecutive_32bit;
 
         /**
          *  Simple structure resembling Apache Arrow arrays of variable length strings.
          *  When you split a `Str`, over 4 GB long, this structure is used to indicate chunk offsets.
-         *  The `end_offsets` contains `count`-many integers marking the end offset of part at a given
-         *  index. The length of consecutive elements can be determined as the difference in consecutive
-         *  offsets. The starting offset of the first element is zero bytes after the `start`.
-         *  Every chunk will include a separator of length `separator_length` at the end, except for the
-         *  last one.
          *
-         *  The layout isn't exactly identical to Arrow, as we have an optional separator and we have one less offset.
+         *  The `offsets` contains `count+1` integers similar to the Apache Arrow format.
+         *  The length of the i-th string is calculated as: `offsets[i+1] - offsets[i] - separator_length`.
+         *  The first offset is typically 0, unless we are looking at a slice of a larger array.
+         *
+         *  The layout is now identical to Apache Arrow format: N+1 offsets for N strings.
          *  https://arrow.apache.org/docs/format/Columnar.html#variable-size-binary-layout
          */
         struct consecutive_slices_64bit_t {
             size_t count;
             size_t separator_length;
             PyObject *parent_string;
-            char const *start;
-            uint64_t *end_offsets;
+            char const *start; // ? Ownership is controlled by presence of `parent_string`
+            uint64_t *offsets; // Apache Arrow format: N+1 offsets for N strings, starting with 0
+            int owns_offsets;  // ? 1 if we allocated `offsets` and should `free`
         } consecutive_64bit;
 
         /**
@@ -234,7 +234,7 @@ typedef struct {
         struct reordered_slices_t {
             size_t count;
             PyObject *parent_string;
-            sz_string_view_t *parts;
+            sz_string_view_t *parts; // ? Ownership is controlled by presence of `parent_string`
         } reordered;
 
     } data;
@@ -426,9 +426,10 @@ SZ_DYNAMIC sz_bool_t sz_py_export_strings_as_u32tape(PyObject *object, sz_cptr_t
     if (!PyObject_TypeCheck(object, &StrsType)) return sz_false_k;
     Strs *strs = (Strs *)object;
     if (strs->type != STRS_CONSECUTIVE_32) return sz_false_k;
+    if (strs->data.consecutive_32bit.separator_length != 0) return sz_false_k;
 
     *data = strs->data.consecutive_32bit.start;
-    *offsets = strs->data.consecutive_32bit.end_offsets;
+    *offsets = strs->data.consecutive_32bit.offsets;
     *count = strs->data.consecutive_32bit.count;
     return sz_true_k;
 }
@@ -443,9 +444,10 @@ SZ_DYNAMIC sz_bool_t sz_py_export_strings_as_u64tape(PyObject *object, sz_cptr_t
     if (!PyObject_TypeCheck(object, &StrsType)) return sz_false_k;
     Strs *strs = (Strs *)object;
     if (strs->type != STRS_CONSECUTIVE_64) return sz_false_k;
+    if (strs->data.consecutive_64bit.separator_length != 0) return sz_false_k;
 
     *data = strs->data.consecutive_64bit.start;
-    *offsets = strs->data.consecutive_64bit.end_offsets;
+    *offsets = strs->data.consecutive_64bit.offsets;
     *count = strs->data.consecutive_64bit.count;
     return sz_true_k;
 }
@@ -466,8 +468,9 @@ typedef void (*get_string_at_offset_t)(Strs *, Py_ssize_t, Py_ssize_t, PyObject 
 
 void str_at_offset_consecutive_32bit(Strs *strs, Py_ssize_t i, Py_ssize_t count, //
                                      PyObject **parent_string, char const **start, size_t *length) {
-    uint32_t start_offset = (i == 0) ? 0 : strs->data.consecutive_32bit.end_offsets[i - 1];
-    uint32_t end_offset = strs->data.consecutive_32bit.end_offsets[i] - //
+    // Apache Arrow format: offsets[i] to offsets[i+1] defines string i
+    uint32_t start_offset = strs->data.consecutive_32bit.offsets[i];
+    uint32_t end_offset = strs->data.consecutive_32bit.offsets[i + 1] - //
                           strs->data.consecutive_32bit.separator_length * (i + 1 != count);
     *start = strs->data.consecutive_32bit.start + start_offset;
     *length = end_offset - start_offset;
@@ -476,8 +479,9 @@ void str_at_offset_consecutive_32bit(Strs *strs, Py_ssize_t i, Py_ssize_t count,
 
 void str_at_offset_consecutive_64bit(Strs *strs, Py_ssize_t i, Py_ssize_t count, //
                                      PyObject **parent_string, char const **start, size_t *length) {
-    uint64_t start_offset = (i == 0) ? 0 : strs->data.consecutive_64bit.end_offsets[i - 1];
-    uint64_t end_offset = strs->data.consecutive_64bit.end_offsets[i] - //
+    // Apache Arrow format: offsets[i] to offsets[i+1] defines string i
+    uint64_t start_offset = strs->data.consecutive_64bit.offsets[i];
+    uint64_t end_offset = strs->data.consecutive_64bit.offsets[i + 1] - //
                           strs->data.consecutive_64bit.separator_length * (i + 1 != count);
     *start = strs->data.consecutive_64bit.start + start_offset;
     *length = end_offset - start_offset;
@@ -507,19 +511,19 @@ sz_bool_t prepare_strings_for_reordering(Strs *strs) {
 
     // Allocate memory for reordered slices
     size_t count = 0;
-    void *old_buffer = NULL;
+    void *buffer_to_release = NULL;
     get_string_at_offset_t getter = NULL;
     PyObject *parent_string = NULL;
     switch (strs->type) {
     case STRS_CONSECUTIVE_32:
         count = strs->data.consecutive_32bit.count;
-        old_buffer = strs->data.consecutive_32bit.end_offsets;
+        if (strs->data.consecutive_32bit.owns_offsets) buffer_to_release = strs->data.consecutive_32bit.offsets;
         parent_string = strs->data.consecutive_32bit.parent_string;
         getter = str_at_offset_consecutive_32bit;
         break;
     case STRS_CONSECUTIVE_64:
         count = strs->data.consecutive_64bit.count;
-        old_buffer = strs->data.consecutive_64bit.end_offsets;
+        if (strs->data.consecutive_64bit.owns_offsets) buffer_to_release = strs->data.consecutive_64bit.offsets;
         parent_string = strs->data.consecutive_64bit.parent_string;
         getter = str_at_offset_consecutive_64bit;
         break;
@@ -548,8 +552,8 @@ sz_bool_t prepare_strings_for_reordering(Strs *strs) {
         new_parts[i].length = length;
     }
 
-    // Release previous used memory.
-    if (old_buffer) free(old_buffer);
+    // Release previous used memory, if we own it
+    if (buffer_to_release) free(buffer_to_release);
 
     // Update the Strs object
     strs->type = STRS_REORDERED;
@@ -1148,7 +1152,6 @@ static PyObject *Strs_subscript(Strs *self, PyObject *key) {
 
     // Create a new `Strs` object
     Strs *result = (Strs *)StrsType.tp_alloc(&StrsType, 0);
-    // REVIEW(alexbowe): Does this raise the appropriate Error on the Python side?
     if (result == NULL && PyErr_NoMemory()) return NULL;
     if (result_count == 0) {
         result->type = STRS_REORDERED;
@@ -1158,7 +1161,7 @@ static PyObject *Strs_subscript(Strs *self, PyObject *key) {
         return (PyObject *)result;
     }
 
-    // If a step is requested, we have to create a new `REORDERED` Strs object,
+    // If a step is requested, we have to create a new `REORDERED` instance of `Strs`,
     // even if the original one was `CONSECUTIVE`.
     if (step != 1) {
         sz_string_view_t *new_parts = (sz_string_view_t *)malloc(result_count * sizeof(sz_string_view_t));
@@ -1174,7 +1177,7 @@ static PyObject *Strs_subscript(Strs *self, PyObject *key) {
         result->data.reordered.parts = new_parts;
         result->data.reordered.parent_string = NULL;
 
-        // Populate the new reordered array using get_string_at_offset
+        // Populate the new reordered array using `get_string_at_offset`
         size_t j = 0;
         if (step > 0)
             for (Py_ssize_t i = start; i < stop; i += step, ++j) {
@@ -1187,6 +1190,8 @@ static PyObject *Strs_subscript(Strs *self, PyObject *key) {
                        &new_parts[j].length);
             }
 
+        // Ensure the parent string isn't prematurely deallocated by this view.
+        Py_XINCREF(result->data.reordered.parent_string);
         return (PyObject *)result;
     }
 
@@ -1204,24 +1209,26 @@ static PyObject *Strs_subscript(Strs *self, PyObject *key) {
         consecutive_slices_t *to = &result->data.consecutive_32bit;
         to->count = result_count;
 
-        // Allocate memory for the end offsets
+        // Allocate memory for the offsets (Apache Arrow format: N+1 offsets for N strings)
         to->separator_length = from->separator_length;
-        to->end_offsets = malloc(sizeof(uint32_t) * result_count);
-        if (to->end_offsets == NULL && PyErr_NoMemory()) {
+        to->offsets = malloc(sizeof(uint32_t) * (result_count + 1));
+        if (to->offsets == NULL && PyErr_NoMemory()) {
             Py_XDECREF(result);
             return NULL;
         }
+        to->owns_offsets = 1;
 
-        // Now populate the offsets
+        // Now populate the offsets (Apache Arrow format: N+1 offsets for N strings)
+        to->offsets[0] = 0; // First offset is always 0
         size_t element_length;
         str_at_offset_consecutive_32bit(self, start, count, &to->parent_string, &to->start, &element_length);
-        to->end_offsets[0] = element_length;
+        to->offsets[1] = element_length;
         for (Py_ssize_t i = 1; i < result_count; ++i) {
-            to->end_offsets[i - 1] += from->separator_length;
+            to->offsets[i] += from->separator_length;
             PyObject *element_parent = NULL;
             char const *element_start = NULL;
-            str_at_offset_consecutive_32bit(self, start, count, &element_parent, &element_start, &element_length);
-            to->end_offsets[i] = element_length + to->end_offsets[i - 1];
+            str_at_offset_consecutive_32bit(self, start + i, count, &element_parent, &element_start, &element_length);
+            to->offsets[i + 1] = element_length + to->offsets[i];
         }
         Py_INCREF(to->parent_string);
         break;
@@ -1233,24 +1240,26 @@ static PyObject *Strs_subscript(Strs *self, PyObject *key) {
         consecutive_slices_t *to = &result->data.consecutive_64bit;
         to->count = result_count;
 
-        // Allocate memory for the end offsets
+        // Allocate memory for the offsets (Apache Arrow format: N+1 offsets for N strings)
         to->separator_length = from->separator_length;
-        to->end_offsets = malloc(sizeof(uint64_t) * result_count);
-        if (to->end_offsets == NULL && PyErr_NoMemory()) {
+        to->offsets = malloc(sizeof(uint64_t) * (result_count + 1));
+        if (to->offsets == NULL && PyErr_NoMemory()) {
             Py_XDECREF(result);
             return NULL;
         }
+        to->owns_offsets = 1;
 
-        // Now populate the offsets
+        // Now populate the offsets (Apache Arrow format: N+1 offsets for N strings)
+        to->offsets[0] = 0; // First offset is always 0
         size_t element_length;
         str_at_offset_consecutive_64bit(self, start, count, &to->parent_string, &to->start, &element_length);
-        to->end_offsets[0] = element_length;
+        to->offsets[1] = element_length;
         for (Py_ssize_t i = 1; i < result_count; ++i) {
-            to->end_offsets[i - 1] += from->separator_length;
+            to->offsets[i] += from->separator_length;
             PyObject *element_parent = NULL;
             char const *element_start = NULL;
-            str_at_offset_consecutive_64bit(self, start, count, &element_parent, &element_start, &element_length);
-            to->end_offsets[i] = element_length + to->end_offsets[i - 1];
+            str_at_offset_consecutive_64bit(self, start + i, count, &element_parent, &element_start, &element_length);
+            to->offsets[i + 1] = element_length + to->offsets[i];
         }
         Py_INCREF(to->parent_string);
         break;
@@ -2639,7 +2648,7 @@ static Strs *Str_split_(PyObject *parent_string, sz_string_view_t const text, sz
     // Initialize Strs object based on the splitting logic
     void *offsets_endings = NULL;
     size_t offsets_capacity = 0;
-    size_t offsets_count = 0;
+    size_t offsets_count = 1; // Start with 1 to account for the initial 0 offset
     size_t bytes_per_offset;
     if (text.length >= UINT32_MAX) {
         bytes_per_offset = 8;
@@ -2647,6 +2656,8 @@ static Strs *Str_split_(PyObject *parent_string, sz_string_view_t const text, sz
         result->data.consecutive_64bit.start = text.start;
         result->data.consecutive_64bit.parent_string = parent_string;
         result->data.consecutive_64bit.separator_length = !keepseparator * match_length;
+        result->data.consecutive_64bit.offsets = NULL;
+        result->data.consecutive_64bit.owns_offsets = 0;
     }
     else {
         bytes_per_offset = 4;
@@ -2654,7 +2665,22 @@ static Strs *Str_split_(PyObject *parent_string, sz_string_view_t const text, sz
         result->data.consecutive_32bit.start = text.start;
         result->data.consecutive_32bit.parent_string = parent_string;
         result->data.consecutive_32bit.separator_length = !keepseparator * match_length;
+        result->data.consecutive_32bit.offsets = NULL;
+        result->data.consecutive_32bit.owns_offsets = 0;
     }
+
+    // Initialize the first offset to 0 (Apache Arrow format)
+    if (offsets_capacity == 0) {
+        offsets_capacity = 4;
+        offsets_endings = malloc(offsets_capacity * bytes_per_offset);
+        if (!offsets_endings) {
+            Py_XDECREF(result);
+            PyErr_NoMemory();
+            return NULL;
+        }
+    }
+    if (bytes_per_offset == 8) { ((uint64_t *)offsets_endings)[0] = 0; }
+    else { ((uint32_t *)offsets_endings)[0] = 0; }
 
     sz_bool_t reached_tail = 0;
     sz_size_t total_skipped = 0;
@@ -2662,7 +2688,7 @@ static Strs *Str_split_(PyObject *parent_string, sz_string_view_t const text, sz
     while (!reached_tail) {
 
         sz_cptr_t match =
-            offsets_count + 1 < max_parts
+            offsets_count < max_parts
                 ? finder(text.start + total_skipped, text.length - total_skipped, separator.start, separator.length)
                 : NULL;
 
@@ -2702,12 +2728,14 @@ static Strs *Str_split_(PyObject *parent_string, sz_string_view_t const text, sz
 
     // Populate the Strs object with the offsets
     if (bytes_per_offset == 8) {
-        result->data.consecutive_64bit.end_offsets = offsets_endings;
-        result->data.consecutive_64bit.count = offsets_count;
+        result->data.consecutive_64bit.offsets = offsets_endings;
+        result->data.consecutive_64bit.count = offsets_count - 1; // count is number of strings, not offsets
+        result->data.consecutive_64bit.owns_offsets = 1;
     }
     else {
-        result->data.consecutive_32bit.end_offsets = offsets_endings;
-        result->data.consecutive_32bit.count = offsets_count;
+        result->data.consecutive_32bit.offsets = offsets_endings;
+        result->data.consecutive_32bit.count = offsets_count - 1; // count is number of strings, not offsets
+        result->data.consecutive_32bit.owns_offsets = 1;
     }
 
     Py_INCREF(parent_string);
@@ -3396,7 +3424,15 @@ static PyObject *Strs_shuffle(Strs *self, PyObject *const *args, Py_ssize_t posi
     size_t count = reordered->count;
 
     // Fisher-Yates Shuffle Algorithm
-    unsigned int seed = seed_obj ? PyLong_AsUnsignedLong(seed_obj) : time(NULL);
+    unsigned int seed = (unsigned int)time(NULL);
+    if (seed_obj) {
+        if (!PyLong_Check(seed_obj)) {
+            PyErr_SetString(PyExc_TypeError, "The seed must be an integer");
+            return NULL;
+        }
+        seed = PyLong_AsUnsignedLong(seed_obj);
+    }
+
     srand(seed);
     for (size_t i = count - 1; i > 0; --i) {
         size_t j = rand() % (i + 1);
@@ -3425,11 +3461,16 @@ static sz_bool_t Strs_argsort_(Strs *self, sz_string_view_t **parts_output, sz_s
     // Allocate temporary memory to store the ordering offsets
     size_t memory_needed = sizeof(sz_sorted_idx_t) * count;
     if (temporary_memory.length < memory_needed) {
-        temporary_memory.start = realloc(temporary_memory.start, memory_needed);
+        void *new_memory = realloc(temporary_memory.start, memory_needed);
+        if (!new_memory) {
+            PyErr_Format(PyExc_MemoryError, "Unable to allocate memory for the sorting operation");
+            return 0;
+        }
+        temporary_memory.start = new_memory;
         temporary_memory.length = memory_needed;
     }
     if (!temporary_memory.start) {
-        PyErr_Format(PyExc_MemoryError, "Unable to allocate memory for the Levenshtein matrix");
+        PyErr_Format(PyExc_MemoryError, "Unable to allocate memory for the sorting operation");
         return 0;
     }
 
@@ -3441,6 +3482,7 @@ static sz_bool_t Strs_argsort_(Strs *self, sz_string_view_t **parts_output, sz_s
     sequence.get_start = parts_get_start;
     sequence.get_length = parts_get_length;
     sz_status_t status = sz_sequence_argsort(&sequence, NULL, (sz_sorted_idx_t *)temporary_memory.start);
+    sz_unused_(status);
 
     // Export results
     *parts_output = parts;
@@ -3481,7 +3523,7 @@ static PyObject *Strs_sort(Strs *self, PyObject *const *args, Py_ssize_t positio
     }
 
     sz_string_view_t *parts = NULL;
-    sz_size_t *order = NULL;
+    sz_sorted_idx_t *order = NULL;
     sz_size_t count = 0;
     if (!Strs_argsort_(self, &parts, &order, &count)) return NULL;
 
@@ -3597,7 +3639,7 @@ static PyObject *Strs_sample(Strs *self, PyObject *const *args, Py_ssize_t posit
         }
         sample_size = PyLong_AsSize_t(sample_size_obj);
     }
-    unsigned int seed = time(NULL); // Default seed
+    unsigned int seed = (unsigned int)time(NULL); // Default seed
     if (seed_obj) {
         if (!PyLong_Check(seed_obj)) {
             PyErr_SetString(PyExc_TypeError, "The seed must be an integer");
@@ -3634,16 +3676,18 @@ static PyObject *Strs_sample(Strs *self, PyObject *const *args, Py_ssize_t posit
     // Randomly sample the strings
     srand(seed);
     PyObject *parent_string;
-    for (Py_ssize_t i = 0; i < sample_size; i++) {
+    for (Py_ssize_t i = 0; i < (Py_ssize_t)sample_size; i++) {
         size_t index = rand() % count;
         getter(self, index, count, &parent_string, &result_parts[i].start, &result_parts[i].length);
     }
 
-    // Update the Strs object
+    // Update the `Strs` object
     result->type = STRS_REORDERED;
     result->data.reordered.count = sample_size;
     result->data.reordered.parts = result_parts;
     result->data.reordered.parent_string = parent_string;
+    // Hold a reference to the parent backing buffer while this view is alive
+    Py_XINCREF(result->data.reordered.parent_string);
     return result;
 }
 
@@ -3832,45 +3876,14 @@ static PyGetSetDef Strs_getsetters[] = {
     {NULL} // Sentinel
 };
 
-static char const doc_Strs_from_arrow[] = //
-    "from_arrow(arrow_array)\n"
-    "\n"
-    "Create a Strs object from an Arrow string array with zero-copy semantics.\n"
-    "\n"
-    "Args:\n"
-    "  arrow_array: Arrow array object supporting `__arrow_c_array__` protocol.\n"
-    "\n"
-    "Returns:\n"
-    "  Strs: Zero-copy view of the Arrow string array.";
-
-static PyObject *Strs_from_arrow(PyObject *cls, PyObject *args, PyObject *kwargs) {
-    PyObject *arrow_array_obj = NULL;
-
-    // Manual argument parsing for performance
-    Py_ssize_t nargs = PyTuple_Size(args);
-    if (nargs != 1) {
-        PyErr_SetString(PyExc_TypeError, "from_arrow() takes exactly 1 argument");
-        return NULL;
-    }
-
-    arrow_array_obj = PyTuple_GET_ITEM(args, 0);
-
-    // Try to get the __arrow_c_array__ method
-    PyObject *arrow_c_array_method = PyObject_GetAttrString(arrow_array_obj, "__arrow_c_array__");
-    if (!arrow_c_array_method) {
-        PyErr_SetString(PyExc_TypeError,
-                        "Object does not support Arrow C interface (__arrow_c_array__ method missing)");
-        return NULL;
-    }
-
-    // Call __arrow_c_array__() to get the capsules
-    PyObject *capsules = PyObject_CallNoArgs(arrow_c_array_method);
-    Py_DECREF(arrow_c_array_method);
-
+// The efficient `Strs_init` path initializing from PyArrow array capsules.
+static int Strs_init_from_pyarrow(Strs *self, PyObject *sequence_obj, int view) {
+    // Handle Arrow array
+    PyObject *capsules = PyObject_CallMethod(sequence_obj, "__arrow_c_array__", NULL);
     if (!capsules || !PyTuple_Check(capsules) || PyTuple_Size(capsules) != 2) {
         Py_XDECREF(capsules);
-        PyErr_SetString(PyExc_ValueError, "__arrow_c_array__ must return a tuple of 2 capsules (schema, array)");
-        return NULL;
+        PyErr_SetString(PyExc_ValueError, "__arrow_c_array__ must return a tuple of 2 capsules");
+        return -1;
     }
 
     PyObject *schema_capsule = PyTuple_GET_ITEM(capsules, 0);
@@ -3879,89 +3892,734 @@ static PyObject *Strs_from_arrow(PyObject *cls, PyObject *args, PyObject *kwargs
     if (!PyCapsule_CheckExact(schema_capsule) || !PyCapsule_CheckExact(array_capsule)) {
         Py_DECREF(capsules);
         PyErr_SetString(PyExc_ValueError, "Expected PyCapsule objects from __arrow_c_array__");
-        return NULL;
+        return -1;
     }
 
-    // Get the Arrow C schema and array structures
     struct ArrowSchema *schema = (struct ArrowSchema *)PyCapsule_GetPointer(schema_capsule, "arrow_schema");
     struct ArrowArray *array = (struct ArrowArray *)PyCapsule_GetPointer(array_capsule, "arrow_array");
 
     if (!schema || !array) {
         Py_DECREF(capsules);
-        PyErr_SetString(PyExc_ValueError, "Failed to extract Arrow C structures from capsules");
-        return NULL;
+        PyErr_SetString(PyExc_ValueError, "Failed to extract Arrow C structures");
+        return -1;
     }
 
-    // Validate that this is a string array (utf8, large utf8, or binary)
-    if (!schema->format ||
-        (strcmp(schema->format, "u") != 0 && strcmp(schema->format, "U") != 0 && strcmp(schema->format, "z") != 0)) {
+    // Validate string array type
+    if (!schema->format || (strcmp(schema->format, "u") != 0 && strcmp(schema->format, "U") != 0 &&
+                            strcmp(schema->format, "z") != 0 && strcmp(schema->format, "Z") != 0)) {
         Py_DECREF(capsules);
-        PyErr_SetString(PyExc_ValueError, "Arrow array must be string type (utf8, large utf8, or binary)");
-        return NULL;
+        PyErr_SetString(PyExc_ValueError, "Arrow array must be string type");
+        return -1;
     }
 
-    // Validate that we have the expected number of buffers (validity, offsets, data)
     if (array->n_buffers != 3) {
         Py_DECREF(capsules);
-        PyErr_SetString(PyExc_ValueError, "String Arrow array must have exactly 3 buffers");
-        return NULL;
+        PyErr_SetString(PyExc_ValueError, "String Arrow array must have 3 buffers");
+        return -1;
     }
 
-    // Extract the buffers: validity (optional), offsets, data
-    const void **buffers = (const void **)array->buffers;
-    const char *data_buffer = (const char *)buffers[2]; // String data
+    void const **buffers = (void const **)array->buffers;
+    uint8_t const *validity = (uint8_t const *)buffers[0]; // May be NULL
+    char const *data_buffer = (char const *)buffers[2];
     size_t length = array->length;
 
-    // Create a new Strs object
-    Strs *result = (Strs *)StrsType.tp_alloc(&StrsType, 0);
-    if (!result) {
-        Py_DECREF(capsules);
-        return NULL;
+    // Determine if 32-bit or 64-bit offsets
+    int use_64bit = (strcmp(schema->format, "U") == 0 || strcmp(schema->format, "Z") == 0);
+
+    if (view) {
+        // Zero-copy mode for Arrow arrays
+        if (use_64bit) {
+            int64_t const *offsets_64 = (int64_t const *)buffers[1];
+            self->type = STRS_CONSECUTIVE_64;
+            self->data.consecutive_64bit.count = length;
+            self->data.consecutive_64bit.separator_length = 0;
+            self->data.consecutive_64bit.parent_string = capsules;
+            self->data.consecutive_64bit.start = data_buffer;
+            self->data.consecutive_64bit.offsets = (uint64_t *)(offsets_64 + 1);
+            self->data.consecutive_64bit.owns_offsets = 0; // Arrow owns buffer
+            Py_INCREF(capsules);
+        }
+        else {
+            int32_t const *offsets_32 = (int32_t const *)buffers[1];
+            self->type = STRS_CONSECUTIVE_32;
+            self->data.consecutive_32bit.count = length;
+            self->data.consecutive_32bit.separator_length = 0;
+            self->data.consecutive_32bit.parent_string = capsules;
+            self->data.consecutive_32bit.start = data_buffer;
+            self->data.consecutive_32bit.offsets = (uint32_t *)(offsets_32 + 1);
+            self->data.consecutive_32bit.owns_offsets = 0; // Arrow owns buffer
+            Py_INCREF(capsules);
+        }
     }
-
-    // Determine if we need 32-bit or 64-bit offsets based on Arrow format
-    const int32_t *offsets_32 = NULL;
-    const int64_t *offsets_64 = NULL;
-    int use_64bit = (strcmp(schema->format, "U") == 0); // Large strings use 64-bit offsets
-
-    if (use_64bit) { offsets_64 = (const int64_t *)buffers[1]; }
     else {
-        offsets_32 = (const int32_t *)buffers[1];
-        // Check if the last offset exceeds 32-bit range
-        int32_t max_offset_32 = offsets_32[length];
-        if (max_offset_32 < 0) { // Overflow indicates we need 64-bit
-            use_64bit = 1;
-            offsets_64 = (const int64_t *)buffers[1];
+        // Copy mode for Arrow arrays
+        if (use_64bit) {
+            int64_t const *offsets_64 = (int64_t const *)buffers[1];
+            size_t total_bytes = offsets_64[length] - offsets_64[0];
+
+            // Allocate new buffer and offsets
+            char *new_data = (char *)malloc(total_bytes);
+            uint64_t *new_offsets = (uint64_t *)malloc(length * sizeof(uint64_t));
+            if (!new_data || !new_offsets) {
+                free(new_data);
+                free(new_offsets);
+                Py_DECREF(capsules);
+                PyErr_NoMemory();
+                return -1;
+            }
+
+            // Copy data and adjust offsets
+            sz_copy(new_data, data_buffer + offsets_64[0], total_bytes);
+            for (size_t i = 0; i < length; i++) {
+                // Handle null values by checking validity bitmap
+                if (validity && !(validity[i / 8] & (1 << (i % 8)))) {
+                    new_offsets[i] = (i == 0) ? 0 : new_offsets[i - 1];
+                }
+                else { new_offsets[i] = offsets_64[i + 1] - offsets_64[0]; }
+            }
+
+            // Create parent bytes object to own the data
+            PyObject *parent = PyBytes_FromStringAndSize(new_data, total_bytes);
+            free(new_data);
+            if (!parent) {
+                free(new_offsets);
+                Py_DECREF(capsules);
+                return -1;
+            }
+
+            self->type = STRS_CONSECUTIVE_64;
+            self->data.consecutive_64bit.count = length;
+            self->data.consecutive_64bit.separator_length = 0;
+            self->data.consecutive_64bit.parent_string = parent;
+            self->data.consecutive_64bit.start = PyBytes_AS_STRING(parent);
+            self->data.consecutive_64bit.offsets = new_offsets;
+            self->data.consecutive_64bit.owns_offsets = 1;
+        }
+        else {
+            int32_t const *offsets_32 = (int32_t const *)buffers[1];
+            size_t total_bytes = offsets_32[length] - offsets_32[0];
+
+            // Allocate new buffer and offsets
+            char *new_data = (char *)malloc(total_bytes);
+            uint32_t *new_offsets = (uint32_t *)malloc(length * sizeof(uint32_t));
+            if (!new_data || !new_offsets) {
+                free(new_data);
+                free(new_offsets);
+                Py_DECREF(capsules);
+                PyErr_NoMemory();
+                return -1;
+            }
+
+            // Copy data and adjust offsets
+            sz_copy(new_data, data_buffer + offsets_32[0], total_bytes);
+            for (size_t i = 0; i < length; i++) {
+                // Handle null values by checking validity bitmap
+                if (validity && !(validity[i / 8] & (1 << (i % 8)))) {
+                    new_offsets[i] = (i == 0) ? 0 : new_offsets[i - 1];
+                }
+                else { new_offsets[i] = offsets_32[i + 1] - offsets_32[0]; }
+            }
+
+            // Create parent bytes object to own the data
+            PyObject *parent = PyBytes_FromStringAndSize(new_data, total_bytes);
+            free(new_data);
+            if (!parent) {
+                free(new_offsets);
+                Py_DECREF(capsules);
+                return -1;
+            }
+
+            self->type = STRS_CONSECUTIVE_32;
+            self->data.consecutive_32bit.count = length;
+            self->data.consecutive_32bit.separator_length = 0;
+            self->data.consecutive_32bit.parent_string = parent;
+            self->data.consecutive_32bit.start = PyBytes_AS_STRING(parent);
+            self->data.consecutive_32bit.offsets = new_offsets;
+            self->data.consecutive_32bit.owns_offsets = 1;
         }
     }
 
-    if (use_64bit) {
-        result->type = STRS_CONSECUTIVE_64;
-        result->data.consecutive_64bit.count = length;
-        result->data.consecutive_64bit.separator_length = 0;     // No separator in Arrow arrays
-        result->data.consecutive_64bit.parent_string = capsules; // Keep capsules alive
-        result->data.consecutive_64bit.start = data_buffer;
-        // Arrow has N+1 offsets, we need the end offsets which start at offsets[1]
-        result->data.consecutive_64bit.end_offsets = (uint64_t *)(offsets_64 + 1);
-        Py_INCREF(capsules); // Keep the capsules alive
-    }
-    else {
-        result->type = STRS_CONSECUTIVE_32;
-        result->data.consecutive_32bit.count = length;
-        result->data.consecutive_32bit.separator_length = 0;     // No separator in Arrow arrays
-        result->data.consecutive_32bit.parent_string = capsules; // Keep capsules alive
-        result->data.consecutive_32bit.start = data_buffer;
-        // Arrow has N+1 offsets, we need the end offsets which start at offsets[1]
-        result->data.consecutive_32bit.end_offsets = (uint32_t *)(offsets_32 + 1);
-        Py_INCREF(capsules); // Keep the capsules alive
+    Py_DECREF(capsules);
+    return 0;
+}
+
+// The less efficient `Strs_init` path initializing from a Pythonic tuple of strings.
+static int Strs_init_from_tuple(Strs *self, PyObject *sequence_obj, int view) {
+    Py_ssize_t count = PyTuple_GET_SIZE(sequence_obj);
+
+    // Empty tuple, create empty Strs
+    if (count == 0) {
+        self->type = STRS_REORDERED;
+        self->data.reordered.count = 0;
+        self->data.reordered.parts = NULL;
+        self->data.reordered.parent_string = NULL;
+        return 0;
     }
 
-    Py_DECREF(capsules);
-    return (PyObject *)result;
+    // Zero-copy mode for Python sequences - use reordered layout for memory-scattered strings
+    if (view) {
+        sz_string_view_t *parts = (sz_string_view_t *)malloc(count * sizeof(sz_string_view_t));
+        if (!parts) {
+            Py_DECREF(sequence_obj);
+            PyErr_NoMemory();
+            return -1;
+        }
+
+        // Create views directly to Python string objects
+        for (size_t i = 0; i < count; i++) {
+            PyObject *item = PyTuple_GET_ITEM(sequence_obj, i);
+            sz_cptr_t item_start;
+            sz_size_t item_length;
+            if (!sz_py_export_string_like(item, &item_start, &item_length)) {
+                free(parts);
+                PyErr_Format(PyExc_TypeError, "Item %zd is not a string-like object", i);
+                return -1;
+            }
+            parts[i].start = item_start;
+            parts[i].length = item_length;
+        }
+
+        self->type = STRS_REORDERED;
+        self->data.reordered.count = count;
+        self->data.reordered.parts = parts;
+        self->data.reordered.parent_string = sequence_obj; // Keep sequence alive
+        Py_INCREF(sequence_obj);
+    }
+    // Allocate a new tape to fit all of the items
+    else {
+        // Estimate the overall size of strings in bytes
+        size_t total_bytes = 0;
+        for (Py_ssize_t i = 0; i < count; i++) {
+            PyObject *item = PyTuple_GET_ITEM(sequence_obj, i);
+            sz_cptr_t item_start;
+            sz_size_t item_length;
+            if (!sz_py_export_string_like(item, &item_start, &item_length)) {
+                PyErr_Format(PyExc_TypeError, "Item %zd is not a string-like object", i);
+                return -1;
+            }
+            total_bytes += item_length;
+        }
+
+        int use_64bit = (total_bytes >= UINT32_MAX);
+
+        // Allocate data buffer
+        char *data_buffer = (char *)malloc(total_bytes);
+        if (!data_buffer) {
+            PyErr_NoMemory();
+            return -1;
+        }
+
+        if (use_64bit) {
+            // Apache Arrow format: N+1 offsets for N strings
+            uint64_t *offsets = (uint64_t *)malloc((count + 1) * sizeof(uint64_t));
+            if (!offsets) {
+                free(data_buffer);
+                PyErr_NoMemory();
+                return -1;
+            }
+
+            size_t offset = 0;
+            offsets[0] = 0; // First offset is always 0
+            for (Py_ssize_t i = 0; i < count; i++) {
+                PyObject *item = PyTuple_GET_ITEM(sequence_obj, i);
+                sz_cptr_t item_start;
+                sz_size_t item_length;
+                sz_py_export_string_like(item, &item_start, &item_length);
+
+                sz_copy(data_buffer + offset, item_start, item_length);
+                offset += item_length;
+                offsets[i + 1] = offset; // Apache Arrow format: offset after this string
+            }
+
+            PyObject *parent = PyBytes_FromStringAndSize(data_buffer, total_bytes);
+            free(data_buffer);
+            if (!parent) {
+                free(offsets);
+                return -1;
+            }
+
+            self->type = STRS_CONSECUTIVE_64;
+            self->data.consecutive_64bit.count = count;
+            self->data.consecutive_64bit.separator_length = 0;
+            self->data.consecutive_64bit.parent_string = parent;
+            self->data.consecutive_64bit.start = PyBytes_AS_STRING(parent);
+            self->data.consecutive_64bit.offsets = offsets;
+        }
+        else {
+            // Apache Arrow format: N+1 offsets for N strings
+            uint32_t *offsets = (uint32_t *)malloc((count + 1) * sizeof(uint32_t));
+            if (!offsets) {
+                free(data_buffer);
+                PyErr_NoMemory();
+                return -1;
+            }
+
+            size_t offset = 0;
+            offsets[0] = 0; // First offset is always 0
+            for (Py_ssize_t i = 0; i < count; i++) {
+                PyObject *item = PyTuple_GET_ITEM(sequence_obj, i);
+                sz_cptr_t item_start;
+                sz_size_t item_length;
+                sz_py_export_string_like(item, &item_start, &item_length);
+
+                sz_copy(data_buffer + offset, item_start, item_length);
+                offset += item_length;
+                offsets[i + 1] = offset; // Apache Arrow format: offset after this string
+            }
+
+            PyObject *parent = PyBytes_FromStringAndSize(data_buffer, total_bytes);
+            free(data_buffer);
+            if (!parent) {
+                free(offsets);
+                return -1;
+            }
+
+            self->type = STRS_CONSECUTIVE_32;
+            self->data.consecutive_32bit.count = count;
+            self->data.consecutive_32bit.separator_length = 0;
+            self->data.consecutive_32bit.parent_string = parent;
+            self->data.consecutive_32bit.start = PyBytes_AS_STRING(parent);
+            self->data.consecutive_32bit.offsets = offsets;
+        }
+    }
+
+    return 0;
+}
+
+// The inefficient `Strs_init` path initializing from a Pythonic list of strings.
+static int Strs_init_from_list(Strs *self, PyObject *sequence_obj, int view) {
+    Py_ssize_t count = PyList_GET_SIZE(sequence_obj);
+
+    // Handle empty list
+    if (count == 0) {
+        self->type = STRS_REORDERED;
+        self->data.reordered.count = 0;
+        self->data.reordered.parts = NULL;
+        self->data.reordered.parent_string = NULL;
+        return 0;
+    }
+
+    // Zero-copy mode for Python sequences - use reordered layout for memory-scattered strings
+    if (view) {
+        sz_string_view_t *parts = (sz_string_view_t *)malloc(count * sizeof(sz_string_view_t));
+        if (!parts) {
+            PyErr_NoMemory();
+            return -1;
+        }
+
+        // Build views directly to the string data
+        for (Py_ssize_t i = 0; i < count; i++) {
+            PyObject *item = PyList_GET_ITEM(sequence_obj, i);
+
+            // Export string data directly (no copying, just span)
+            sz_cptr_t item_start;
+            sz_size_t item_length;
+            if (!sz_py_export_string_like(item, &item_start, &item_length)) {
+                free(parts);
+                PyErr_Format(PyExc_TypeError, "Item %zd is not a string-like object", i);
+                return -1;
+            }
+
+            parts[i].start = item_start;
+            parts[i].length = item_length;
+        }
+
+        // Setup reordered layout with parent list to keep strings alive
+        self->type = STRS_REORDERED;
+        self->data.reordered.count = count;
+        self->data.reordered.parts = parts;
+        self->data.reordered.parent_string = sequence_obj; // Keep list alive
+        Py_INCREF(sequence_obj);
+        return 0;
+    }
+    // Allocate a new tape to fit all of the items
+    else {
+
+        // First pass: calculate total size needed
+        size_t total_bytes = 0;
+        int use_64bit = 0;
+
+        for (Py_ssize_t i = 0; i < count; i++) {
+            PyObject *item = PyList_GET_ITEM(sequence_obj, i);
+            sz_cptr_t item_start;
+            sz_size_t item_length;
+            if (!sz_py_export_string_like(item, &item_start, &item_length)) {
+                PyErr_Format(PyExc_TypeError, "Item %zd is not a string-like object", i);
+                return -1;
+            }
+
+            // Check if we need 64-bit offsets
+            if (total_bytes + item_length > UINT32_MAX) { use_64bit = 1; }
+            total_bytes += item_length;
+        }
+
+        // Allocate buffers based on calculated sizes
+        char *data_buffer = (char *)malloc(total_bytes);
+        void *offsets;
+
+        // Apache Arrow format: N+1 offsets for N strings
+        if (use_64bit) { offsets = malloc((count + 1) * sizeof(uint64_t)); }
+        else { offsets = malloc((count + 1) * sizeof(uint32_t)); }
+
+        if (!data_buffer || !offsets) {
+            free(data_buffer);
+            free(offsets);
+            PyErr_NoMemory();
+            return -1;
+        }
+
+        // Second pass: copy data and build offsets (Apache Arrow format)
+        size_t current_offset = 0;
+        // Set first offset to 0
+        if (use_64bit) { ((uint64_t *)offsets)[0] = 0; }
+        else { ((uint32_t *)offsets)[0] = 0; }
+
+        for (Py_ssize_t i = 0; i < count; i++) {
+            PyObject *item = PyList_GET_ITEM(sequence_obj, i);
+            sz_cptr_t item_start;
+            sz_size_t item_length;
+
+            // We already validated this in first pass, so this should not fail
+            sz_py_export_string_like(item, &item_start, &item_length);
+
+            // Copy the string data
+            memcpy(data_buffer + current_offset, item_start, item_length);
+            current_offset += item_length;
+
+            // Store offset (Apache Arrow format: offset after this string)
+            if (use_64bit) { ((uint64_t *)offsets)[i + 1] = current_offset; }
+            else { ((uint32_t *)offsets)[i + 1] = current_offset; }
+        }
+
+        // Create parent bytes object from the buffer
+        PyObject *parent = PyBytes_FromStringAndSize(data_buffer, total_bytes);
+        free(data_buffer);
+        if (!parent) {
+            free(offsets);
+            PyErr_NoMemory();
+            return -1;
+        }
+
+        // Setup the consecutive layout (32-bit or 64-bit)
+        if (use_64bit) {
+            self->type = STRS_CONSECUTIVE_64;
+            self->data.consecutive_64bit.count = count;
+            self->data.consecutive_64bit.separator_length = 0;
+            self->data.consecutive_64bit.parent_string = parent;
+            self->data.consecutive_64bit.start = PyBytes_AS_STRING(parent);
+            self->data.consecutive_64bit.offsets = (uint64_t *)offsets;
+            self->data.consecutive_64bit.owns_offsets = 1;
+        }
+        else {
+            self->type = STRS_CONSECUTIVE_32;
+            self->data.consecutive_32bit.count = count;
+            self->data.consecutive_32bit.separator_length = 0;
+            self->data.consecutive_32bit.parent_string = parent;
+            self->data.consecutive_32bit.start = PyBytes_AS_STRING(parent);
+            self->data.consecutive_32bit.offsets = (uint32_t *)offsets;
+            self->data.consecutive_32bit.owns_offsets = 1;
+        }
+
+        return 0;
+    }
+}
+
+// The inefficient `Strs_init` path initializing from a Pythonic iterable of strings.
+static int Strs_init_from_iterable(Strs *self, PyObject *sequence_obj, int view) {
+    // Get an iterator from the object
+    PyObject *iterator = PyObject_GetIter(sequence_obj);
+    if (!iterator) {
+        PyErr_SetString(PyExc_TypeError, "Object is not iterable");
+        return -1;
+    }
+
+    if (view) {
+        // View mode is not supported for iterators because we can't safely keep references
+        // to all the individual string objects without significant overhead
+        Py_DECREF(iterator);
+        PyErr_SetString(PyExc_ValueError, "View mode (view=True) is not supported for iterators. "
+                                          "Use view=False to create a copy, or convert to a list/tuple first.");
+        return -1;
+    }
+    // Allocate a new tape to fit all of the items
+    else {
+        size_t data_capacity = 4096;
+        size_t offsets_capacity = 16;
+        size_t count = 0;
+        size_t total_bytes = 0;
+        int use_64bit = 0; // Start with 32-bit
+
+        char *data_buffer = (char *)malloc(data_capacity);
+        void *offsets = malloc(offsets_capacity * sizeof(uint32_t)); // Start with 32-bit
+
+        if (!data_buffer || !offsets) {
+            free(data_buffer);
+            free(offsets);
+            Py_DECREF(iterator);
+            PyErr_NoMemory();
+            return -1;
+        }
+
+        // Iterate through all items
+        PyObject *item;
+        while ((item = PyIter_Next(iterator))) {
+            sz_cptr_t item_start;
+            sz_size_t item_length;
+            if (!sz_py_export_string_like(item, &item_start, &item_length)) {
+                Py_DECREF(item);
+                free(data_buffer);
+                free(offsets);
+                Py_DECREF(iterator);
+                PyErr_Format(PyExc_TypeError, "Item %zd is not a string-like object", count);
+                return -1;
+            }
+
+            // Check if adding this string would exceed UINT32_MAX and switch to 64-bit
+            if (!use_64bit && total_bytes + item_length > UINT32_MAX) {
+                // Convert offsets from 32-bit to 64-bit
+                uint64_t *new_offsets = (uint64_t *)malloc(offsets_capacity * sizeof(uint64_t));
+                if (!new_offsets) {
+                    Py_DECREF(item);
+                    free(data_buffer);
+                    free(offsets);
+                    Py_DECREF(iterator);
+                    PyErr_NoMemory();
+                    return -1;
+                }
+
+                // Copy existing 32-bit offsets to 64-bit
+                uint32_t *old_offsets = (uint32_t *)offsets;
+                for (size_t i = 0; i < count; i++) { new_offsets[i] = old_offsets[i]; }
+
+                free(offsets);
+                offsets = new_offsets;
+                use_64bit = 1;
+            }
+
+            // Grow data buffer if needed (doubling strategy)
+            while (total_bytes + item_length > data_capacity) {
+                size_t new_capacity = data_capacity * 2;
+                if (new_capacity < data_capacity) { // Overflow check
+                    new_capacity = SIZE_MAX;
+                    if (total_bytes + item_length > new_capacity) {
+                        Py_DECREF(item);
+                        free(data_buffer);
+                        free(offsets);
+                        Py_DECREF(iterator);
+                        PyErr_SetString(PyExc_MemoryError, "String data too large");
+                        return -1;
+                    }
+                }
+
+                char *new_buffer = (char *)realloc(data_buffer, new_capacity);
+                if (!new_buffer) {
+                    Py_DECREF(item);
+                    free(data_buffer);
+                    free(offsets);
+                    Py_DECREF(iterator);
+                    PyErr_NoMemory();
+                    return -1;
+                }
+                data_buffer = new_buffer;
+                data_capacity = new_capacity;
+            }
+
+            // Grow offsets array if needed (doubling strategy)
+            if (count >= offsets_capacity) {
+                size_t new_capacity = offsets_capacity * 2;
+                size_t element_size = use_64bit ? sizeof(uint64_t) : sizeof(uint32_t);
+                if (new_capacity > SIZE_MAX / element_size) {
+                    Py_DECREF(item);
+                    free(data_buffer);
+                    free(offsets);
+                    Py_DECREF(iterator);
+                    PyErr_SetString(PyExc_MemoryError, "Too many strings");
+                    return -1;
+                }
+
+                void *new_offsets = realloc(offsets, new_capacity * element_size);
+                if (!new_offsets) {
+                    Py_DECREF(item);
+                    free(data_buffer);
+                    free(offsets);
+                    Py_DECREF(iterator);
+                    PyErr_NoMemory();
+                    return -1;
+                }
+                offsets = new_offsets;
+                offsets_capacity = new_capacity;
+            }
+
+            // Copy the string data
+            memcpy(data_buffer + total_bytes, item_start, item_length);
+            total_bytes += item_length;
+
+            // Store offset
+            if (use_64bit) { ((uint64_t *)offsets)[count] = total_bytes; }
+            else { ((uint32_t *)offsets)[count] = total_bytes; }
+            count++;
+
+            Py_DECREF(item);
+        }
+
+        Py_DECREF(iterator);
+
+        // Check for errors during iteration
+        if (PyErr_Occurred()) {
+            free(data_buffer);
+            free(offsets);
+            return -1;
+        }
+
+        // Handle empty iterator
+        if (count == 0) {
+            free(data_buffer);
+            free(offsets);
+            self->type = STRS_REORDERED;
+            self->data.reordered.count = 0;
+            self->data.reordered.parts = NULL;
+            self->data.reordered.parent_string = NULL;
+            return 0;
+        }
+
+        // Shrink buffers to actual size
+        char *final_buffer = (char *)realloc(data_buffer, total_bytes);
+        if (final_buffer) data_buffer = final_buffer;
+
+        size_t element_size = use_64bit ? sizeof(uint64_t) : sizeof(uint32_t);
+        void *final_offsets = realloc(offsets, count * element_size);
+        if (final_offsets) offsets = final_offsets;
+
+        // Create parent bytes object from the buffer
+        PyObject *parent = PyBytes_FromStringAndSize(data_buffer, total_bytes);
+        free(data_buffer);
+        if (!parent) {
+            free(offsets);
+            PyErr_NoMemory();
+            return -1;
+        }
+
+        // Setup the consecutive layout (32-bit or 64-bit)
+        if (use_64bit) {
+            self->type = STRS_CONSECUTIVE_64;
+            self->data.consecutive_64bit.count = count;
+            self->data.consecutive_64bit.separator_length = 0;
+            self->data.consecutive_64bit.parent_string = parent;
+            self->data.consecutive_64bit.start = PyBytes_AS_STRING(parent);
+            self->data.consecutive_64bit.offsets = (uint64_t *)offsets;
+            self->data.consecutive_64bit.owns_offsets = 1;
+        }
+        else {
+            self->type = STRS_CONSECUTIVE_32;
+            self->data.consecutive_32bit.count = count;
+            self->data.consecutive_32bit.separator_length = 0;
+            self->data.consecutive_32bit.parent_string = parent;
+            self->data.consecutive_32bit.start = PyBytes_AS_STRING(parent);
+            self->data.consecutive_32bit.offsets = (uint32_t *)offsets;
+            self->data.consecutive_32bit.owns_offsets = 1;
+        }
+
+        return 0;
+    }
+}
+
+static int Strs_init(Strs *self, PyObject *args, PyObject *kwargs) {
+    // Manual argument parsing for performance
+    Py_ssize_t nargs = PyTuple_Size(args);
+    if (nargs > 2) {
+        PyErr_SetString(PyExc_TypeError,
+                        "Strs() takes at most 2 arguments: sequence of strings and a boolean indicator");
+        return -1;
+    }
+
+    PyObject *sequence_obj = nargs >= 1 ? PyTuple_GET_ITEM(args, 0) : NULL;
+    PyObject *view_obj = nargs >= 2 ? PyTuple_GET_ITEM(args, 1) : NULL;
+    int view = 0; // Default to copy mode
+
+    // Parse keyword arguments if provided
+    if (kwargs) {
+        Py_ssize_t pos = 0;
+        PyObject *key, *value;
+        while (PyDict_Next(kwargs, &pos, &key, &value)) {
+            if (PyUnicode_CompareWithASCIIString(key, "sequence") == 0 && !sequence_obj) { sequence_obj = value; }
+            else if (PyUnicode_CompareWithASCIIString(key, "view") == 0 && !view_obj) { view_obj = value; }
+            else {
+                PyErr_Format(PyExc_TypeError, "Got an unexpected keyword argument '%U'", key);
+                return -1;
+            }
+        }
+    }
+
+    // Parse view flag
+    if (view_obj) {
+        view = PyObject_IsTrue(view_obj);
+        if (view == -1) return -1;
+    }
+
+    // If no sequence provided, create empty Strs
+    if (!sequence_obj) {
+        self->type = STRS_REORDERED;
+        self->data.reordered.count = 0;
+        self->data.reordered.parts = NULL;
+        self->data.reordered.parent_string = NULL;
+        return 0;
+    }
+
+    // Check if it's an Arrow array (has `__arrow_c_array__` method)
+    PyObject *arrow_method = PyObject_GetAttrString(sequence_obj, "__arrow_c_array__");
+    if (arrow_method) {
+        Py_DECREF(arrow_method);
+        return Strs_init_from_pyarrow(self, sequence_obj, view);
+    }
+
+    // Handle more traditional Python sequences
+    PyErr_Clear(); // Clear the attribute error from checking for `__arrow_c_array__`
+
+    if (PyTuple_Check(sequence_obj)) { return Strs_init_from_tuple(self, sequence_obj, view); }
+    else if (PyList_Check(sequence_obj)) { return Strs_init_from_list(self, sequence_obj, view); }
+    else if (PyObject_HasAttrString(sequence_obj, "__iter__")) {
+        return Strs_init_from_iterable(self, sequence_obj, view);
+    }
+    else {
+        PyErr_SetString(PyExc_TypeError, "Strs() argument must be a tuple, list, or iterable");
+        return -1;
+    }
+
+    return 0;
+}
+
+static void Strs_dealloc(Strs *self) {
+    switch (self->type) {
+    case STRS_CONSECUTIVE_32:
+        // Free offset array (only if owned) and decref parent string
+        if (self->data.consecutive_32bit.owns_offsets && self->data.consecutive_32bit.offsets)
+            free(self->data.consecutive_32bit.offsets);
+        Py_XDECREF(self->data.consecutive_32bit.parent_string);
+        break;
+
+    case STRS_CONSECUTIVE_64:
+        // Free offset array (only if owned) and decref parent string
+        if (self->data.consecutive_64bit.owns_offsets && self->data.consecutive_64bit.offsets)
+            free(self->data.consecutive_64bit.offsets);
+        Py_XDECREF(self->data.consecutive_64bit.parent_string);
+        break;
+
+    case STRS_REORDERED:
+        // Free parts array and decref parent string
+        free(self->data.reordered.parts);
+        Py_XDECREF(self->data.reordered.parent_string);
+        break;
+
+    case STRS_MULTI_SOURCE:
+        // Handle multi-source cleanup if needed
+        // (not currently used in our implementation)
+        break;
+    }
+
+    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyMethodDef Strs_methods[] = {
-    {"from_arrow", (PyCFunction)Strs_from_arrow, METH_VARARGS | METH_KEYWORDS | METH_CLASS, doc_Strs_from_arrow},
     {"shuffle", Strs_shuffle, SZ_METHOD_FLAGS, "Shuffle (in-place) the elements of the Strs object."}, //
     {"sort", Strs_sort, SZ_METHOD_FLAGS, "Sort (in-place) the elements of the Strs object."},          //
     {"argsort", Strs_argsort, SZ_METHOD_FLAGS, "Provides the permutation to achieve sorted order."},   //
@@ -3971,13 +4629,14 @@ static PyMethodDef Strs_methods[] = {
 };
 
 static char const doc_Strs[] = //
-    "Strs(source)\\n"
+    "Strs(sequence, view=False)\\n"
     "\\n"
     "Space-efficient container for large collections of strings and their slices.\\n"
     "Optimized for memory efficiency and bulk operations on string collections.\\n"
     "\\n"
     "Args:\\n"
-    "  source (sequence): Iterable of strings to store.\\n"
+    "  sequence (list | tuple | generator | pyarrow.Array): Collection of strings to store.\\n"
+    "  view (bool): If True, create a view into the original data instead of copying it.\\n"
     "\\n"
     "Features:\\n"
     "  - Memory-efficient storage with shared backing buffers\\n"
@@ -3991,7 +4650,6 @@ static char const doc_Strs[] = //
     "  - argsort(): Get indices for sorted order\\n"
     "  - shuffle(): Randomize element order\\n"
     "  - sample(): Get random subset of elements\\n"
-    "  - from_arrow(): Create from Apache Arrow arrays (zero-copy)\\n"
     "\\n"
     "Example:\\n"
     "  >>> strs = sz.Strs(['apple', 'banana', 'cherry'])\\n"
@@ -4005,6 +4663,8 @@ static PyTypeObject StrsType = {
     .tp_itemsize = 0,
     .tp_flags = Py_TPFLAGS_DEFAULT,
     .tp_new = PyType_GenericNew,
+    .tp_init = (initproc)Strs_init,
+    .tp_dealloc = (destructor)Strs_dealloc,
     .tp_methods = Strs_methods,
     .tp_as_sequence = &Strs_as_sequence,
     .tp_as_mapping = &Strs_as_mapping,
@@ -4097,11 +4757,40 @@ PyMODINIT_FUNC PyInit_stringzilla(void) {
         PyModule_AddStringConstant(m, "__version__", version_str);
     }
 
-    // Define SIMD capabilities
+    // Define SIMD capabilities as a tuple
     {
         sz_capability_t caps = sz_capabilities();
+        
+        // Get capability strings using the new function
+        char const *cap_strings[SZ_CAPABILITIES_COUNT];
+        sz_size_t cap_count = sz_capabilities_to_strings_implementation_(caps, cap_strings, SZ_CAPABILITIES_COUNT);
+        
+        // Create a Python tuple with the capabilities
+        PyObject *caps_tuple = PyTuple_New(cap_count);
+        if (!caps_tuple) {
+            Py_XDECREF(m);
+            return NULL;
+        }
+        
+        for (sz_size_t i = 0; i < cap_count; i++) {
+            PyObject *cap_str = PyUnicode_FromString(cap_strings[i]);
+            if (!cap_str) {
+                Py_DECREF(caps_tuple);
+                Py_XDECREF(m);
+                return NULL;
+            }
+            PyTuple_SET_ITEM(caps_tuple, i, cap_str);
+        }
+        
+        if (PyModule_AddObject(m, "__capabilities__", caps_tuple) < 0) {
+            Py_DECREF(caps_tuple);
+            Py_XDECREF(m);
+            return NULL;
+        }
+        
+        // Also keep the old comma-separated string version for backward compatibility
         sz_cptr_t caps_str = sz_capabilities_to_string(caps);
-        PyModule_AddStringConstant(m, "__capabilities__", caps_str);
+        PyModule_AddStringConstant(m, "__capabilities_str__", caps_str);
     }
 
     Py_INCREF(&StrType);
