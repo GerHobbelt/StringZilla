@@ -411,7 +411,12 @@ typedef sz_size_t sz_pgram_t;      // "Pointer-sized N-gram" of a string
  *  @brief Simple boolean type, until `_Bool` in C 99 and `true` and `false` in C 23.
  *  @see https://stackoverflow.com/questions/1921539/using-boolean-values-in-c
  */
+#if !defined(__cplusplus)
 typedef enum { sz_false_k = 0, sz_true_k = 1 } sz_bool_t;
+#else
+enum : bool { sz_false_k = false, sz_true_k = true };
+typedef bool sz_bool_t;
+#endif
 
 /**
  *  @brief Describes the result of a comparison operation. Equivalent to @b `std::strong_ordering` in C++20.
@@ -964,8 +969,15 @@ SZ_PUBLIC void sz_sequence_from_null_terminated_strings(sz_cptr_t *start, sz_siz
 /** @brief Helper-macro to mark potentially unused variables. */
 #define sz_unused_(x) ((void)(x))
 
+// fix warning C4067: unexpected tokens following preprocessor directive - expected a newline
+#if defined(__has_builtin)
+#define sz__has_builtin(f)  __has_builtin(f)
+#else
+#define sz__has_builtin(f)  0
+#endif
+
 /** @brief Helper-macro casting a variable to another type of the same size. */
-#if defined(__has_builtin) && __has_builtin(__builtin_bit_cast)
+#if sz__has_builtin(__builtin_bit_cast)
 #define sz_bitcast_(type, value) __builtin_bit_cast(type, (value))
 #else
 #define sz_bitcast_(type, value) (*((type *)&(value)))
@@ -1406,7 +1418,7 @@ SZ_PUBLIC sz_bool_t sz_memory_allocator_equal(sz_memory_allocator_t const *a, sz
     if (!a || !b) return sz_false_k;
 
     // Two allocators are considered equal if they have the same function pointers and handle
-    return (a->allocate == b->allocate) && (a->free == b->free) && (a->handle == b->handle) ? sz_true_k : sz_false_k;
+    return (a->allocate == b->allocate) && (a->release == b->release) && (a->handle == b->handle) ? sz_true_k : sz_false_k;
 }
 
 SZ_PUBLIC sz_cptr_t sz_sequence_from_null_terminated_strings_get_start_(void const *handle, sz_size_t i) {
