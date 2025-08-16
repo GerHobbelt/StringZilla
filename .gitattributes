@@ -1,9 +1,9 @@
 # GitHub's Linguist doesn't properly classify many languages
 # https://github.com/github-linguist/linguist/blob/main/docs/overrides.md
-*.h linguist-language=C
-*.c linguist-language=C
-*.cpp linguist-language=C++
-*.hpp linguist-language=C++
-*.cuh linguist-language=CUDA
-*.S linguist-language=Assembly
-*.ptx linguist-language=Assembly
+*.h            text eol=lf  linguist-language=C
+*.c            text eol=lf  linguist-language=C
+*.cpp          text eol=lf  linguist-language=C++
+*.hpp          text eol=lf  linguist-language=C++
+*.cuh          text eol=lf  linguist-language=CUDA
+*.S            text eol=lf  linguist-language=Assembly
+*.ptx          text eol=lf  linguist-language=Assembly
