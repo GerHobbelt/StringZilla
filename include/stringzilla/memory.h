@@ -709,6 +709,12 @@ SZ_PUBLIC void sz_lookup_haswell(sz_ptr_t target, sz_size_t length, sz_cptr_t so
             blended_128_to_159_vec.ymm,                  //
             not_second_bit_vec.ymm);
 
+		// fix warning C4310: cast truncates constant value
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4310)
+#endif
+
         // The third round selects using the 1st bit.
         not_first_bit_vec.ymm = _mm256_cmpeq_epi8( //
             _mm256_and_si256(_mm256_set1_epi8((char)0x80), source_vec.ymm), _mm256_setzero_si256());
@@ -716,6 +722,10 @@ SZ_PUBLIC void sz_lookup_haswell(sz_ptr_t target, sz_size_t length, sz_cptr_t so
             blended_128_to_159_vec.ymm,               //
             blended_0_to_31_vec.ymm,                  //
             not_first_bit_vec.ymm);
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
         // And dump the result into the target.
         _mm256_storeu_si256((__m256i *)target, blended_0_to_31_vec.ymm);
