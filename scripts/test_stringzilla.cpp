@@ -60,6 +60,7 @@
 #include <unordered_set> // `std::unordered_set`
 #include <set>           // `std::set`
 #include <vector>        // `std::vector`
+#include <numeric>       // `std::accumulate`
 
 #include <string>      // Baseline
 #include <string_view> // Baseline
@@ -235,6 +236,7 @@ void test_memory_allocator_struct() {
 void test_byteset_struct() {
     sz_byteset_t s;
     sz_byteset_init(&s);
+	// fix warning C4805: '==': unsafe mix of type 'sz_bool_t' and type 'bool' in operation
     assert(sz_byteset_contains(&s, 'a') == false);
     sz_byteset_add(&s, 'a');
     assert(sz_byteset_contains(&s, 'a') == true);
