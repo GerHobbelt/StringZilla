@@ -712,9 +712,9 @@ extern "C" {
 
 #pragma region Metadata
 
-SZ_DYNAMIC int szs_version_major(void) { return STRINGZILLA_H_VERSION_MAJOR; }
-SZ_DYNAMIC int szs_version_minor(void) { return STRINGZILLA_H_VERSION_MINOR; }
-SZ_DYNAMIC int szs_version_patch(void) { return STRINGZILLA_H_VERSION_PATCH; }
+SZ_DYNAMIC int szs_version_major(void) { return STRINGZILLA_VERSION_MAJOR; }
+SZ_DYNAMIC int szs_version_minor(void) { return STRINGZILLA_VERSION_MINOR; }
+SZ_DYNAMIC int szs_version_patch(void) { return STRINGZILLA_VERSION_PATCH; }
 
 SZ_DYNAMIC sz_capability_t szs_capabilities(void) {
     sz_capability_t cpu_capabilities = sz_capabilities_implementation_();
