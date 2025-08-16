@@ -7,7 +7,7 @@
 #include <numeric> // `std::accumulate`
 
 #include <bench.hpp>
-#include <test.hpp> // `random_string`
+//#include <test.hpp> // `random_string`
 
 using namespace ashvardanian::stringzilla::scripts;
 
