@@ -7,13 +7,14 @@
 #define STRINGCUZILLA_TYPES_HPP_
 
 #include <thread> // `std::thread::hardware_concurrency`
+#include <stdint.h> 
 
 #include "stringzilla/types.hpp"
 
 namespace ashvardanian {
 namespace stringzilla {
 
-enum bytes_per_cell_t : uint {
+enum bytes_per_cell_t : uint_least8_t {
     zero_bytes_per_cell_k = 0,
     one_byte_per_cell_k = 1,
     two_bytes_per_cell_k = 2,
