@@ -26,15 +26,17 @@ namespace stringzillas {
  *  @brief Wraps a single task for the CUDA-based @b byte-level "fingerprint" kernels.
  *  @note Used to allow sorting/grouping inputs to differentiate device-wide and warp-wide tasks.
  */
-template <typename char_type_>
-struct cuda_floating_fingerprint_task_ {
+template <typename char_type_, typename min_hash_type_ = u32_t, typename min_count_type_ = u32_t>
+struct cuda_fingerprint_task_ {
     using char_t = char_type_;
+    using min_hash_t = min_hash_type_;
+    using min_count_t = min_count_type_;
 
     char_t const *text_ptr = nullptr;
     size_t text_length = 0;
     size_t original_index = 0;
-    u32_t *min_hashes = nullptr;
-    u32_t *min_counts = nullptr;
+    min_hash_t *min_hashes = nullptr;
+    min_count_t *min_counts = nullptr;
     warp_tasks_density_t density = warps_working_together_k; // ? Worst case, we have to sync final writes
 };
 
@@ -203,12 +205,12 @@ template <                                                                     /
     typename char_type_ = byte_t, warp_size_t warp_size_ = warp_size_nvidia_k, //
     warp_tasks_density_t density_ = four_warps_per_multiprocessor_k            //
     >
-__global__ void floating_rolling_hashers_on_each_cuda_warp_(                            //
-    cuda_floating_fingerprint_task_<char_type_> const *tasks, size_t const tasks_count, //
+__global__ void floating_rolling_hashers_on_each_cuda_warp_(                   //
+    cuda_fingerprint_task_<char_type_> const *tasks, size_t const tasks_count, //
     floating_rolling_hasher<f64_t> const *hashers, size_t const hashers_count, size_t const window_width) {
 
     //
-    using task_t = cuda_floating_fingerprint_task_<char_type_>;
+    using task_t = cuda_fingerprint_task_<char_type_>;
     using hasher_t = floating_rolling_hasher<f64_t>;
     constexpr warp_size_t warp_size_k = warp_size_;
     constexpr warp_tasks_density_t density_k = density_;
@@ -384,7 +386,7 @@ template <                                               //
     size_t dimensions_, sz_capability_t capability_,     //
     typename char_type_ = byte_t, size_t warp_size_ = 32 //
     >
-__global__ void floating_rolling_hashers_across_cuda_device_(span<cuda_floating_fingerprint_task_<char_type_>> tasks,
+__global__ void floating_rolling_hashers_across_cuda_device_(span<cuda_fingerprint_task_<char_type_>> tasks,
                                                              span<floating_rolling_hasher<f64_t> const> hashers) {
     sz_unused_(tasks);
     sz_unused_(hashers);
@@ -607,13 +609,13 @@ struct floating_rolling_hashers<sz_cap_cuda_k, dimensions_> {
     static constexpr unsigned groups_count_k = aligned_dimensions_k / hashes_per_warp_k;
 
   private:
-    allocator_t alloc_;
+    allocator_t allocator_;
     hashers_t hashers_;
     size_t window_width_;
 
   public:
-    floating_rolling_hashers(allocator_t const &alloc = {}) noexcept
-        : alloc_(alloc), hashers_(alloc), window_width_(0) {}
+    floating_rolling_hashers(allocator_t const &allocator = {}) noexcept
+        : allocator_(allocator), hashers_(allocator), window_width_(0) {}
     constexpr size_t dimensions() const noexcept { return dimensions_k; }
     constexpr size_t window_width() const noexcept { return window_width_; }
     constexpr size_t window_width(size_t) const noexcept { return window_width_; }
@@ -644,7 +646,7 @@ struct floating_rolling_hashers<sz_cap_cuda_k, dimensions_> {
                                               min_counts_span_t min_counts, gpu_specs_t specs = {},
                                               cuda_executor_t executor = {}) const noexcept {
 
-        using task_t = cuda_floating_fingerprint_task_<byte_t>;
+        using task_t = cuda_fingerprint_task_<byte_t>;
         using tasks_allocator_t = typename allocator_t::template rebind<task_t>::other;
         sz_unused_(specs);
 
@@ -654,7 +656,7 @@ struct floating_rolling_hashers<sz_cap_cuda_k, dimensions_> {
         cudaEventCreate(&stop_event, cudaEventBlockingSync);
 
         // Populate the tasks array with a single task for the entire device.
-        safe_vector<task_t, tasks_allocator_t> tasks(alloc_);
+        safe_vector<task_t, tasks_allocator_t> tasks(allocator_);
         if (tasks.try_resize(1) == status_t::bad_alloc_k) return {status_t::bad_alloc_k};
 
         tasks[0] = task_t {
@@ -712,6 +714,16 @@ struct floating_rolling_hashers<sz_cap_cuda_k, dimensions_> {
         return {status_t::success_k, cudaSuccess, execution_milliseconds};
     }
 
+    /**
+     *  @brief Computes many fingerprints in parallel for input @p texts via an @p executor.
+     *  @param[in] texts The input texts to hash, typically a sequential container of UTF-8 encoded strings.
+     *  @param[out] min_hashes_per_text The output fingerprints, an array of vectors of minimum hashes.
+     *  @param[out] min_counts_per_text The output frequencies of @p `min_hashes_per_text` hashes.
+     *  @param[in] executor The device executor to use for parallel processing, defaults to the first GPU.
+     *  @param[in] specs The GPU specifications to use, defaults to an empty `gpu_specs_t`.
+     *  @retval status_t::success_k on success, or an error code otherwise.
+     *  @retval status_t::bad_alloc_k if the memory allocation fails.
+     */
     template <typename texts_type_, typename min_hashes_per_text_type_, typename min_counts_per_text_type_>
     SZ_NOINLINE cuda_status_t operator()(texts_type_ const &texts, min_hashes_per_text_type_ &&min_hashes_per_text,
                                          min_counts_per_text_type_ &&min_counts_per_text, cuda_executor_t executor = {},
@@ -720,7 +732,7 @@ struct floating_rolling_hashers<sz_cap_cuda_k, dimensions_> {
         using texts_t = texts_type_;
         using text_t = typename texts_t::value_type;
         using char_t = typename text_t::value_type;
-        using task_t = cuda_floating_fingerprint_task_<char_t>;
+        using task_t = cuda_fingerprint_task_<char_t>;
         using tasks_allocator_t = typename allocator_t::template rebind<task_t>::other;
 
         // Preallocate the events for GPU timing.
@@ -729,7 +741,7 @@ struct floating_rolling_hashers<sz_cap_cuda_k, dimensions_> {
         cudaEventCreate(&stop_event, cudaEventBlockingSync);
 
         // Populate the tasks for each warp or the entire device, putting it into unified memory.
-        safe_vector<task_t, tasks_allocator_t> tasks(alloc_);
+        safe_vector<task_t, tasks_allocator_t> tasks(allocator_);
         if (tasks.try_resize(texts.size()) == status_t::bad_alloc_k) return {status_t::bad_alloc_k};
         for (size_t task_index = 0; task_index < texts.size(); ++task_index) {
             auto const &text = texts[task_index];

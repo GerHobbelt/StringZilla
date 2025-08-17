@@ -740,7 +740,7 @@ SZ_PUBLIC void sz_lookup_haswell(sz_ptr_t target, sz_size_t length, sz_cptr_t so
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_HASWELL
+#endif            // SZ_USE_HASWELL
 #pragma endregion // Haswell Implementation
 
 /*  AVX512 implementation of the string search algorithms for Skylake and newer CPUs.
@@ -974,7 +974,7 @@ SZ_PUBLIC void sz_move_skylake(sz_ptr_t target, sz_cptr_t source, sz_size_t leng
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_SKYLAKE
+#endif            // SZ_USE_SKYLAKE
 #pragma endregion // Skylake Implementation
 
 /*  AVX512 implementation of the string search algorithms for Ice Lake and newer CPUs.
@@ -1106,7 +1106,7 @@ SZ_PUBLIC void sz_lookup_ice(sz_ptr_t target, sz_size_t length, sz_cptr_t source
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_ICE
+#endif            // SZ_USE_ICE
 #pragma endregion // Ice Lake Implementation
 
 /*  Implementation of the string search algorithms using the Arm NEON instruction set, available on 64-bit
@@ -1232,7 +1232,7 @@ SZ_PUBLIC void sz_lookup_neon(sz_ptr_t target, sz_size_t length, sz_cptr_t sourc
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_NEON
+#endif            // SZ_USE_NEON
 #pragma endregion // NEON Implementation
 
 /*  Implementation of the memory operations using the Arm SVE variable-length registers,
@@ -1360,7 +1360,7 @@ SZ_PUBLIC void sz_move_sve(sz_ptr_t target, sz_cptr_t source, sz_size_t length) 
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_SVE
+#endif            // SZ_USE_SVE
 #pragma endregion // SVE Implementation
 
 /*  Pick the right implementation for the string search algorithms.

@@ -1499,7 +1499,7 @@ SZ_PUBLIC void sz_fill_random_skylake(sz_ptr_t text, sz_size_t length, sz_u64_t 
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_SKYLAKE
+#endif            // SZ_USE_SKYLAKE
 #pragma endregion // Skylake Implementation
 
 /*  AVX512 implementation of the string search algorithms for Ice Lake and newer CPUs.
@@ -1879,7 +1879,7 @@ SZ_INTERNAL void sz_hash_minimal_x4_update_ice_(sz_hash_minimal_x4_t_ *state, __
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_ICE
+#endif            // SZ_USE_ICE
 #pragma endregion // Ice Lake Implementation
 
 /*  Implementation of the string hashing algorithms using the Arm NEON instruction set, available on 64-bit
@@ -2272,7 +2272,7 @@ SZ_PUBLIC void sz_fill_random_neon(sz_ptr_t text, sz_size_t length, sz_u64_t non
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_NEON
+#endif            // SZ_USE_NEON
 #pragma endregion // NEON Implementation
 
 /*  Implementation of the string search algorithms using the Arm SVE variable-length registers,

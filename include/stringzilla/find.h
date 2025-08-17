@@ -315,7 +315,7 @@ SZ_PUBLIC sz_cptr_t sz_rfind_byteset_serial(sz_cptr_t text, sz_size_t length, sz
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
 #endif
-	sz_cptr_t const end = text;
+    sz_cptr_t const end = text;
     for (text += length; text != end;)
         if (sz_byteset_contains(set, *(text -= 1))) return text;
     return SZ_NULL_CHAR;
@@ -1042,7 +1042,7 @@ SZ_PUBLIC sz_cptr_t sz_rfind_byteset_haswell(sz_cptr_t text, sz_size_t length, s
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_HASWELL
+#endif            // SZ_USE_HASWELL
 #pragma endregion // Haswell Implementation
 
 /*  AVX512 implementation of the string search algorithms for Skylake and newer CPUs.
@@ -1273,7 +1273,7 @@ SZ_PUBLIC sz_cptr_t sz_rfind_skylake(sz_cptr_t h, sz_size_t h_length, sz_cptr_t 
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_SKYLAKE
+#endif            // SZ_USE_SKYLAKE
 #pragma endregion // Skylake Implementation
 
 /*  AVX512 implementation of the string search algorithms for Ice Lake and newer CPUs.
@@ -1417,7 +1417,7 @@ SZ_PUBLIC sz_cptr_t sz_rfind_byteset_ice(sz_cptr_t text, sz_size_t length, sz_by
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_ICE
+#endif            // SZ_USE_ICE
 #pragma endregion // Ice Lake Implementation
 
 /*  Implementation of the string search algorithms using the Arm NEON instruction set, available on 64-bit
@@ -1792,7 +1792,7 @@ SZ_PUBLIC sz_cptr_t sz_find_sve(sz_cptr_t h, sz_size_t h_length, sz_cptr_t n, sz
 #pragma clang attribute pop
 #pragma GCC pop_options
 #endif
-#endif           // SZ_USE_SVE
+#endif            // SZ_USE_SVE
 #pragma endregion // SVE Implementation
 
 /*  Pick the right implementation for the string search algorithms.
