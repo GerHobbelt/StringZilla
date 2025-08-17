@@ -119,7 +119,7 @@ struct fuzzy_config_t {
     std::size_t max_string_length = 200;
 };
 
-void randomize_strings(fuzzy_config_t config, std::vector<std::string> &array, bool unique = false) {
+inline void randomize_strings(fuzzy_config_t config, std::vector<std::string> &array, bool unique = false) {
     array.resize(config.batch_size);
 
     std::uniform_int_distribution<std::size_t> length_distribution(config.min_string_length, config.max_string_length);
@@ -135,7 +135,7 @@ void randomize_strings(fuzzy_config_t config, std::vector<std::string> &array, b
     }
 }
 
-void randomize_strings(fuzzy_config_t config, std::vector<std::string> &array, arrow_strings_tape_t &tape,
+inline void randomize_strings(fuzzy_config_t config, std::vector<std::string> &array, arrow_strings_tape_t &tape,
                        bool unique = false) {
 
     randomize_strings(config, array, unique);

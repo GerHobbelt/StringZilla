@@ -14,9 +14,9 @@
  *  The Visual C++ run-time library detects incorrect iterator use,
  *  and asserts and displays a dialog box at run time on Windows.
  */
-#if !defined(_ITERATOR_DEBUG_LEVEL) || _ITERATOR_DEBUG_LEVEL == 0
-#define _ITERATOR_DEBUG_LEVEL 1
-#endif
+//#if !defined(_ITERATOR_DEBUG_LEVEL) || _ITERATOR_DEBUG_LEVEL == 0
+//#define _ITERATOR_DEBUG_LEVEL 1
+//#endif
 
 /**
  *  ! Overload the following with caution.
@@ -29,7 +29,7 @@
 #define SZ_USE_ICE 0
 #define SZ_USE_NEON 0
 #define SZ_USE_SVE 0
- */
+*/
 #define SZ_USE_SVE2 0
 #if defined(SZ_DEBUG)
 #undef SZ_DEBUG
@@ -1961,6 +1961,10 @@ void test_stl_containers() {
     assert(words_stl.empty());
 }
 
+#if defined(BUILD_MONOLITHIC)
+extern "C" int stringzilla_test_stringzillas_main(int argc, char const **argv);
+#endif
+
 extern "C"
 int main(int argc, char const **argv) {
 
@@ -2052,6 +2056,13 @@ int main(int argc, char const **argv) {
     test_search_with_misaligned_repetitions();
 #endif
 
-    std::printf("All tests passed... Unbelievable!\n");
-    return 0;
+#if defined(BUILD_MONOLITHIC)
+    std::printf("\n\nAlso running the extended StringCuZilla (CUDA) tests...\n\n");
+    auto rv = stringzilla_test_stringzillas_main(argc, argv);
+#endif
+
+	if (!rv) {
+		std::printf("All tests passed... Unbelievable!\n");
+	}
+    return rv;
 }
