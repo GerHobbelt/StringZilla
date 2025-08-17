@@ -35,6 +35,11 @@
 
 namespace szs = ashvardanian::stringzillas;
 
+#if defined(BUILD_MONOLITHIC)
+#define main  stringzilla_test_stringzillas_main
+#endif
+
+extern "C"
 int main(int argc, char const **argv) {
     sz_unused_(argc && argv);
     std::printf("Hi, dear tester! You look nice today!\n");

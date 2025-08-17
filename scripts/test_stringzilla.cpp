@@ -1961,6 +1961,7 @@ void test_stl_containers() {
     assert(words_stl.empty());
 }
 
+extern "C"
 int main(int argc, char const **argv) {
 
     // Let's greet the user nicely
