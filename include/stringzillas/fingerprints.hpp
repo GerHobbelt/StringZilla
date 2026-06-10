@@ -1091,7 +1091,7 @@ template <                                         //
 struct floating_rolling_hashers;
 
 template <size_t dimensions_>
-struct floating_rolling_hashers<sz_cap_serial_k, dimensions_> {
+struct floating_rolling_hashers<sz_cap_serial_k, dimensions_, void> {
 
     using hasher_t = floating_rolling_hasher<f64_t>;
     using rolling_state_t = f64_t;
@@ -1332,7 +1332,7 @@ SZ_INLINE __m256d _mm256_floor_magic_pd(__m256d x) noexcept {
  *  In a single YMM register we can store 4 `f64_t` values, so we can process 4 hashes per register.
  */
 template <size_t dimensions_>
-struct floating_rolling_hashers<sz_cap_haswell_k, dimensions_> {
+struct floating_rolling_hashers<sz_cap_haswell_k, dimensions_, void> {
 
     using hasher_t = floating_rolling_hasher<f64_t>;
     using rolling_state_t = f64_t;
@@ -1668,7 +1668,7 @@ SZ_INLINE __m512d _mm512_floor_magic_pd(__m512d x) noexcept {
  *  In a single ZMM register we can store 8 `f64_t` values, so we can process 8 hashes per register.
  */
 template <size_t dimensions_>
-struct floating_rolling_hashers<sz_cap_skylake_k, dimensions_> {
+struct floating_rolling_hashers<sz_cap_skylake_k, dimensions_, void> {
 
     using hasher_t = floating_rolling_hasher<f64_t>;
     using rolling_state_t = f64_t;
@@ -1853,7 +1853,11 @@ struct floating_rolling_hashers<sz_cap_skylake_k, dimensions_> {
         return results;
     }
 
-    __attribute__((no_sanitize("address"))) void roll_group(       //
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((no_sanitize("address")))
+#endif
+    void
+    roll_group(                                                    //
         span<byte_t const> text_chunk, unsigned const group_index, //
         span<rolling_state_t, dimensions_k> last_states,           //
         span<rolling_state_t, dimensions_k> rolling_minimums,      //
