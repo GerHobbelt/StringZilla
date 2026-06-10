@@ -20,11 +20,12 @@ The project is split into the following parts:
 - `include/stringzilla/stringzilla.h` - single-header C implementation.
 - `include/stringzilla/stringzilla.hpp` - single-header C++ wrapper.
 - `include/stringzillas/*` - parallel CPU/GPU header-only backends.
-- `c/*` - C sources for dynamic dispatch and parallel backends.
-- `rust/*` - Rust crate sources.
-- `python/*` - Python bindings.
-- `swift/*` - Swift package sources and tests.
-- `javascript/*` - JavaScript bindings.
+- `c/*` - [C, C++, and CUDA](#c-and-c) sources for dynamic dispatch and parallel backends.
+- `rust/*` - [Rust](#rust) crate sources.
+- `python/*` - [Python](#python) bindings.
+- `swift/*` - [Swift](#swift) package sources and tests.
+- `javascript/*` - [JavaScript](#javascript) bindings.
+- `golang/*` - [Go](#golang) bindings.
 - `scripts/*` - Scripts for benchmarking and testing.
 - `cli/*` - SIMD-accelerated CLI utilities.
 
@@ -111,7 +112,7 @@ For Python code:
 
 - Use lower-case names for functions and variables.
 
-## Contributing in C++ and C
+## C++ and C
 
 The primary C implementation and the C++ wrapper are built with CMake.
 Assuming the extensive use of new SIMD intrinsics and recent C++ language features, using a recent compiler is recommended.
@@ -162,12 +163,14 @@ cmake --build build_release --config Release
 Using modern syntax, this is how you build and run the test suite:
 
 ```bash
-cmake -D STRINGZILLA_BUILD_TEST=1 -D CMAKE_BUILD_TYPE=Debug -B build_debug
+cmake -D STRINGZILLA_BUILD_TEST=1 -D STRINGZILLA_USE_SANITIZERS=0 -D CMAKE_BUILD_TYPE=Debug -B build_debug
 cmake --build build_debug --config Debug      # Which will produce the following targets:
 build_debug/stringzilla_test_cpp20            # Unit test for the entire library compiled for current hardware
 build_debug/stringzilla_test_cpp20_serial     # x86 variant compiled for IvyBridge - last arch. before AVX2
 build_debug/stringzilla_test_cpp20_serial     # Arm variant compiled without Neon
 ```
+
+Note, that Address Sanitizers have a hard time with masked load and store instructions in AVX-512 and SVE.
 
 To use CppCheck for static analysis make sure to export the compilation commands.
 Overall, CppCheck and Clang-Tidy are extremely noisy and not suitable for CI, but may be useful for local development.
@@ -415,7 +418,7 @@ cmake -D CMAKE_BUILD_TYPE=Release \
 cmake --build build_artifacts --config Release
 ```
 
-## Contributing in Parallel C++ and CUDA
+## Parallel C++ and CUDA
 
 ```sh
 cmake -D CMAKE_BUILD_TYPE=Debug -D STRINGZILLA_BUILD_TEST=1 -B build_debug
@@ -434,14 +437,15 @@ cuda-gdb ./build_debug/stringzillas_test_cu20
 cuda-memcheck ./build_debug/stringzillas_test_cu20
 ```
 
-## Contributing in Python
+## Python
 
 Python bindings are implemented using pure CPython, so you wouldn't need to install SWIG, PyBind11, or any other third-party library.
 Still, you need a virtual environment, and it's recommended to use `uv` to create one.
 
 ```bash
-uv venv --python 3.11                   # or your preferred Python version
+uv venv --python 3.12                   # or your preferred Python version
 source .venv/bin/activate               # to activate the virtual environment
+uv pip install setuptools wheel         # to pull the latest build tools
 uv pip install -e . --force-reinstall   # to build locally from source
 ```
 
@@ -483,6 +487,14 @@ Also considering the other optional dependencies for benchmarking and other scri
 uv pip install -r scripts/requirements.txt 
 ```
 
+### Packaging
+
+For source distributions, make sure `MANIFEST.in` is up-to-date:
+
+```bash
+uv build --sdist --out-dir dist
+```
+
 Before you ship, please make sure the `cibuilwheel` packaging works and tests pass on other platforms.
 Don't forget to use the right [CLI arguments][cibuildwheel-cli] to avoid overloading your Docker runtime.
 
@@ -506,7 +518,7 @@ sudo $(which cibuildwheel) --platform linux
 To avoid QEMU issues on SVE and some other uncommon instructions, you can inform the PyTest suite, that it's running in an emulated environment:
 
 ```bash
-SZ_IS_QEMU_=1 sudo $(which cibuildwheel) --platform linux
+SZ_IS_QEMU_=1 sudo $(which cibuildwheel) --platform linux --archs s390x
 ```
 
 On Windows and macOS, to avoid frequent path resolution issues, you may want to use:
@@ -520,18 +532,23 @@ python -m cibuildwheel --platform windows
 ### Benchmarking
 
 For high-performance low-latency benchmarking, stick to C/C++ native benchmarks, as the CPython is likely to cause bottlenecks.
+Before running the benchmarks, pull dependencies:
+
+```sh
+uv pip install -r scripts/requirements.txt
+```
+
 For benchmarking, the following scripts are provided.
 
 ```sh
 uv run --no-project scripts/bench_find.py --help
 uv run --no-project scripts/bench_sequence.py --help
 uv run --no-project scripts/bench_similarities.py --help
-uv run --no-project scripts/bench_fingerprints.py --help
 ```
 
 Alternatively, you can explore the Jupyter notebooks in `scripts/` directory.
 
-## Contributing in JavaScript
+## JavaScript
 
 ```bash
 npm install
@@ -545,7 +562,7 @@ npm link stringzilla
 node --input-type=module -e "import('stringzilla').then(m=>console.log(m.default.capabilities))"
 ```
 
-## Contributing in Swift
+## Swift
 
 ```bash
 swift build && swift test
@@ -564,13 +581,13 @@ To format the code on Linux:
 sudo docker run --rm -v "$PWD:/workspace" -w /workspace swift:6.0 /bin/bash -c "swift format . -i -r --configuration .swift-format"
 ```
 
-## Contributing in Rust
+## Rust
 
 StringZilla's Rust crate supports both `std` and `no_std` builds.
 Other options include:
 
 - `std` (default): enables standard library support.
-- `cpus`: multi‑threaded CPU backend (implies `std`).
+- `cpus`: multi-threaded CPU backend (implies `std`).
 - `cuda`: CUDA backend (implies `cpus` and `std`).
 - `rocm`: ROCm backend (implies `cpus` and `std`).
 
@@ -597,7 +614,7 @@ cargo package --list --allow-dirty
 
 If you want to run benchmarks against third-party implementations, check out the [`ashvardanian/memchr_vs_stringzilla`](https://github.com/ashvardanian/memchr_vs_stringzilla/) repository.
 
-## Contributing in GoLang
+## GoLang
 
 First, precompile the C library:
 

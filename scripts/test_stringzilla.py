@@ -76,6 +76,7 @@ SEED_VALUES = [
 def log_test_environment():
     """Automatically log environment info before running any tests."""
 
+    print()  # New line for better readability
     print("=== StringZilla Test Environment ===")
     print(f"Platform: {platform.platform()}")
     print(f"Architecture: {platform.machine()}")
@@ -101,6 +102,7 @@ def log_test_environment():
             sz.reset_capabilities(desired)
 
     print("=" * 40)
+    print()  # New line for better readability
 
 
 def seed_random_generators(seed_value: Optional[int] = None):
@@ -153,6 +155,44 @@ def test_unit_count():
     assert big.count("a") == 5
     assert big.count("aa") == 2
     assert big.count("aa", allowoverlap=True) == 4
+
+
+def test_unit_count_byteset():
+    native = "abcdef"
+    big = Str(native)
+
+    assert big.count_byteset("abc") == 3  # a, b, c
+    assert big.count_byteset("xyz") == 0  # no matches
+    assert big.count_byteset("aeiou") == 2  # a and e
+
+    # Empty inputs
+    assert sz.count_byteset("", "abc") == 0
+    assert sz.count_byteset("abc", "") == 0
+    assert sz.count_byteset("", "") == 0
+
+    # Single character set
+    assert sz.count_byteset("hello", "l") == 2
+    assert sz.count_byteset("hello", "x") == 0
+
+    # Repeated patterns
+    assert sz.count_byteset("mississippi", "si") == 8  # s:4, i:4 total
+    assert sz.count_byteset("aaaaaa", "a") == 6
+
+    # Test start/end bounds
+    native = "abcdefghij"
+    big = Str(native)
+
+    assert big.count_byteset("abc", 0, 3) == 3  # "abc"
+    assert big.count_byteset("abc", 1, 3) == 2  # "bc"
+    assert big.count_byteset("abc", 3) == 0  # "defghij"
+    assert big.count_byteset("hij", 7) == 3  # "hij"
+    assert big.count_byteset("hij", -3) == 3  # last 3 chars "hij"
+    assert big.count_byteset("abc", 0, -7) == 3  # first 3 chars "abc"
+
+    # Test edge cases
+    assert sz.count_byteset("a", "a", 0, 0) == 0  # empty slice
+    assert sz.count_byteset("abc", "abc", 10, 20) == 0  # out of bounds
+    assert sz.count_byteset("abc", "abc", -10, -5) == 0  # negative out of bounds
 
 
 def test_unit_contains():
@@ -270,7 +310,11 @@ def test_unit_split():
     assert native.splitlines() == list(big.splitlines())
     assert native.splitlines(True) == list(big.splitlines(keeplinebreaks=True))
 
-    # Check for equivalence with native Python strings, including boundary conditions
+    # Check for equivalence with native Python strings, including SWAR boundary conditions
+    assert native.split("l") == list(big.split("l"))
+    assert native.split("li") == list(big.split("li"))
+    assert native.split("lin") == list(big.split("lin"))
+    assert native.split("line") == list(big.split("line"))
     assert native.split("line1") == list(big.split("line1"))
     assert native.split("line3") == list(big.split("line3"))
     assert native.split("\n", maxsplit=0) == list(big.split("\n", maxsplit=0))
@@ -512,6 +556,17 @@ def test_unit_globals():
     assert sz.find_last_not_of("aaabbbccc", "bc") == 2
     assert sz.find_last_not_of("abcdef", "abcdef") == -1
     assert sz.find_last_not_of("hello   ", " ") == 4
+
+    # Test byteset counting
+    assert sz.count_byteset("abcdef", "abc") == 3
+    assert sz.count_byteset("abcdef", "xyz") == 0
+    assert sz.count_byteset("hello world", "aeiou") == 3  # e, o, o
+    assert sz.count_byteset("mississippi", "si") == 8  # s, i, s, s, i, s, s, i
+    assert sz.count_byteset("", "abc") == 0
+    assert sz.count_byteset("abc", "") == 0
+    assert sz.count_byteset("abcdef", "abc", 1, 4) == 2  # bc in "bcd"
+    assert sz.count_byteset("hello world", "aeiou", 2) == 2  # o, o
+    assert sz.count_byteset("hello world", "aeiou", 0, 5) == 2  # e, o in "hello"
 
     # Compare partitioning functions
     assert sz.partition("abcdef", "c") == ("ab", "c", "def")

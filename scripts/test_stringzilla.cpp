@@ -24,13 +24,14 @@
  *  ! but they come handy during development, if you want to validate
  *  ! different ISA-specific implementations.
 
-#define SZ_USE_HASWELL 0
-#define SZ_USE_SKYLAKE 0
-#define SZ_USE_ICE 0
-#define SZ_USE_NEON 0
-#define SZ_USE_SVE 0
+ #define SZ_USE_HASWELL 0
+ #define SZ_USE_SKYLAKE 0
+ #define SZ_USE_ICE 0
+ #define SZ_USE_NEON 0
+ #define SZ_USE_SVE 0
+ #define SZ_USE_SVE2 0
+ #define SZ_USE_MISALIGNED_LOADS 0
 */
-#define SZ_USE_SVE2 0
 #if defined(SZ_DEBUG)
 #undef SZ_DEBUG
 #endif
@@ -738,11 +739,31 @@ void test_stl_compatibility_for_reads() {
 
     // More complex queries.
     assert(str("abbabbaaaaaa").find("aa") == 6);
+    assert(str("abbabbaaaaaa").find("ba") == 2);
+    assert(str("abbabbaaaaaa").find("bb") == 1);
+    assert(str("abbabbaaaaaa").find("bab") == 2);
+    assert(str("abbabbaaaaaa").find("babb") == 2);
+    assert(str("abbabbaaaaaa").find("babba") == 2);
     assert(str("abcdabcd").substr(2, 4).find("abc") == str::npos);
     assert(str("hello, world!").substr(0, 11).find("world") == str::npos);
     assert(str("axabbcxcaaabbccc").find("aaabbccc") == 8);
+    assert(str("abcdabcdabc________").find("abcd") == 0);
+    assert(str("________abcdabcdabc").find("abcd") == 8);
 
-    // Simple repeating patterns - with one "almost match" before an actual match in each direction
+    // Cover every SWAR case for unique string sequences.
+    auto lowercase_alphabet = str("abcdefghijklmnopqrstuvwxyz");
+    for (std::size_t one_byte_offset = 0; one_byte_offset + 1 <= lowercase_alphabet.size(); ++one_byte_offset)
+        assert(lowercase_alphabet.find(lowercase_alphabet.substr(one_byte_offset, 1)) == one_byte_offset);
+    for (std::size_t two_byte_offset = 0; two_byte_offset + 2 <= lowercase_alphabet.size(); ++two_byte_offset)
+        assert(lowercase_alphabet.find(lowercase_alphabet.substr(two_byte_offset, 2)) == two_byte_offset);
+    for (std::size_t four_byte_offset = 0; four_byte_offset + 4 <= lowercase_alphabet.size(); ++four_byte_offset)
+        assert(lowercase_alphabet.find(lowercase_alphabet.substr(four_byte_offset, 4)) == four_byte_offset);
+    for (std::size_t three_byte_offset = 0; three_byte_offset + 3 <= lowercase_alphabet.size(); ++three_byte_offset)
+        assert(lowercase_alphabet.find(lowercase_alphabet.substr(three_byte_offset, 3)) == three_byte_offset);
+    for (std::size_t five_byte_offset = 0; five_byte_offset + 5 <= lowercase_alphabet.size(); ++five_byte_offset)
+        assert(lowercase_alphabet.find(lowercase_alphabet.substr(five_byte_offset, 5)) == five_byte_offset);
+
+    // Simple repeating patterns - with one "almost match" before an actual match in each direction.
     assert(str("_ab_abc_").find("abc") == 4);
     assert(str("_abc_ab_").rfind("abc") == 1);
     assert(str("_abc_abcd_").find("abcd") == 5);
@@ -791,9 +812,6 @@ void test_stl_compatibility_for_reads() {
     assert(str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-").find_first_of("XYZ") == 49); // sets
     assert(str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-").find_last_of("xyz") == 25);  // sets
     assert(str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-").find_last_of("XYZ") == 51);  // sets
-
-    // Corner case behaviors for long strings
-    assert(str(258, '0').find(str(256, '1')) == str::npos);
 
     // clang-format off
     // Using single-byte non-ASCII values, e.g., À (0xC0), Æ (0xC6)
@@ -955,6 +973,9 @@ void test_stl_compatibility_for_updates() {
     assert(str({'h', 'e', 'l', 'l', 'o'}) == "hello"); // Construct from initializer list
     assert(str(str("hello"), 2) == "llo");             // Construct from another string suffix
     assert(str(str("hello"), 2, 2) == "ll");           // Construct from another string range
+
+    // Corner case constructors and search behaviors for long strings
+    assert(str(258, '0').find(str(256, '1')) == str::npos);
 
     // Assignments.
     assert_scoped(str s = "obsolete", s = "hello", s == "hello");

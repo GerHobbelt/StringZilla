@@ -29,13 +29,16 @@ It __accelerates exact and fuzzy string matching, edit distance computations, so
 
 - 🐂 __[C](#basic-usage-with-c-99-and-newer) :__ Upgrade LibC's `<string.h>` to `<stringzilla/stringzilla.h>`  in C 99
 - 🐉 __[C++](#basic-usage-with-c-11-and-newer):__ Upgrade STL's `<string>` to `<stringzilla/stringzilla.hpp>` in C++ 11
+- 🧮 __[CUDA](#cuda):__ Process in-bulk with `<stringzillas/stringzillas.cuh>` in CUDA C++ 17
 - 🐍 __[Python](#quick-start-python-🐍):__ Upgrade your `str` to faster `Str`
-- 🍎 __[Swift](#quick-start-swift-🍏):__ Use the `String+StringZilla` extension
 - 🦀 __[Rust](#quick-start-rust-🦀):__ Use the `StringZilla` traits crate
+- 🦫 __[Go](#quick-start-golang-🦫):__ Use the `StringZilla` cGo module
+- 🍎 __[Swift](#quick-start-swift-🍏):__ Use the `String+StringZilla` extension
+- 🟨 __[JavaScript](#quick-start-javascript-🟨):__ Use the `StringZilla` library
 - 🐚 __[Shell][faq-shell]__: Accelerate common CLI tools with `sz_` prefix
 - 📚 Researcher? Jump to [Algorithms & Design Decisions](#algorithms--design-decisions-📚)
 - 💡 Thinking to contribute? Look for ["good first issues"][first-issues]
-- 🤝 And check the [guide](https://github.com/ashvardanian/StringZilla/blob/main/CONTRIBUTING.md) to setup the environment
+- 🤝 And check the [guide](https://github.com/ashvardanian/StringZilla/blob/main/CONTRIBUTING.md) to set up the environment
 - Want more bindings or features? Let [me](https://github.com/ashvardanian) know!
 
 [faq-shell]: https://github.com/ashvardanian/StringZilla/blob/main/cli/README.md
@@ -47,7 +50,7 @@ __Who is this for?__
 - For software engineers optimizing strings in their apps and services.
 - For bioinformaticians and search engineers looking for edit-distances for [USearch](https://github.com/unum-cloud/usearch).
 - For [DBMS][faq-dbms] devs, optimizing `LIKE`, `ORDER BY`, and `GROUP BY` operations.
-- For hardware designers, needing a SWAR baseline for strings-processing functionality.
+- For hardware designers, needing a SWAR baseline for string-processing functionality.
 - For students studying SIMD/SWAR applications to non-data-parallel operations.
 
 [faq-dbms]: https://en.wikipedia.org/wiki/Database
@@ -185,9 +188,9 @@ __Who is this for?__
       <span style="color:#ABABAB;">arm:</span> <b>25.8</b> MB/s
     </td>
   </tr>
-  <!-- Mapping Characters with Look-Up Table Transforms -->
+  <!-- Mapping characters with lookup table transforms -->
   <tr>
-    <td colspan="4" align="center">Mapping Characters with Look-Up Table Transforms</td>
+    <td colspan="4" align="center">Mapping characters with lookup table transforms</td>
   </tr>
   <tr>
     <td align="center">⚪</td>
@@ -235,38 +238,40 @@ __Who is this for?__
   </tr>
   <!-- Edit Distance -->
   <tr>
-    <td colspan="4" align="center">Levenshtein edit distance, ≅ 5 bytes long</td>
+    <td colspan="4" align="center">Levenshtein edit distance, text lines ≅ 100 bytes long</td>
   </tr>
   <tr>
     <td align="center">⚪</td>
     <td align="center">⚪</td>
     <td align="center">
-      via <code>jellyfish</code> <sup>3</sup><br/>
-      <span style="color:#ABABAB;">x86:</span> <b>1,550</b> &centerdot;
-      <span style="color:#ABABAB;">arm:</span> <b>2,220</b> ns
+      via <code>NLTK</code> <sup>3</sup><br/>
+      <span style="color:#ABABAB;">x86:</span> <b>2,490,161</b> &centerdot;
+      <span style="color:#ABABAB;">arm:</span> <b>2,081,543</b> CUPS
     </td>
     <td align="center">
-      <code>szs_levenshtein_distance</code><br/>
-      <span style="color:#ABABAB;">x86:</span> <b>99</b> &centerdot;
-      <span style="color:#ABABAB;">arm:</span> <b>180</b> ns
+      <code>szs_levenshtein_distances_t</code><br/>
+      <span style="color:#ABABAB;">x86:</span> <b>78,851,644</b> &centerdot;
+      <span style="color:#ABABAB;">arm:</span> <b>36,857,367</b> &centerdot;
+      <span style="color:#ABABAB;">cuda:</span> <b>3,369,569,512</b> CUPS
     </td>
   </tr>
   <!-- Alignment Score -->
   <tr>
-    <td colspan="4" align="center">Needleman-Wunsch alignment scores, ≅ 10 K aminoacids long</td>
+    <td colspan="4" align="center">Needleman-Wunsch alignment scores, proteins ≅ 1 K amino acids long</td>
   </tr>
   <tr>
     <td align="center">⚪</td>
     <td align="center">⚪</td>
     <td align="center">
       via <code>biopython</code> <sup>4</sup><br/>
-      <span style="color:#ABABAB;">x86:</span> <b>257</b> &centerdot;
-      <span style="color:#ABABAB;">arm:</span> <b>367</b> ms
+      <span style="color:#ABABAB;">x86:</span> <b>575,981,513</b> &centerdot;
+      <span style="color:#ABABAB;">arm:</span> <b>436,350,732</b> CUPS
     </td>
     <td align="center">
-      <code>szs_needleman_wunsch_score</code><br/>
-      <span style="color:#ABABAB;">x86:</span> <b>73</b> &centerdot;
-      <span style="color:#ABABAB;">arm:</span> <b>177</b> ms
+      <code>szs_needleman_wunsch_scores_t</code><br/>
+      <span style="color:#ABABAB;">x86:</span> <b>452,629,942</b> &centerdot;
+      <span style="color:#ABABAB;">arm:</span> <b>520,170,239</b> &centerdot;
+      <span style="color:#ABABAB;">cuda:</span> <b>9,017,327,818</b> CUPS
     </td>
   </tr>
 </table>
@@ -277,9 +282,10 @@ Notably, if the CPU supports misaligned loads, even the 64-bit SWAR backends are
 
 > Most benchmarks were conducted on a 1 GB English text corpus, with an average word length of 6 characters.
 > The code was compiled with GCC 12, using `glibc` v2.35.
-> The benchmarks performed on Arm-based Graviton3 AWS `c7g` instances and `r7iz` Intel Sapphire Rapids.
+> The benchmarks were performed on Arm-based Graviton3 AWS `c7g` instances and `r7iz` Intel Sapphire Rapids.
 > Most modern Arm-based 64-bit CPUs will have similar relative speedups.
 > Variance within x86 CPUs will be larger.
+> For CUDA benchmarks, the Nvidia H100 GPUs were used.
 > <sup>1</sup> Unlike other libraries, LibC requires strings to be NULL-terminated.
 > <sup>2</sup> Six whitespaces in the ASCII set are: ` \t\n\v\f\r`. Python's and other standard libraries have specialized functions for those.
 > <sup>3</sup> Most Python libraries for strings are also implemented in C.
@@ -291,7 +297,7 @@ Notably, if the CPU supports misaligned loads, even the 64-bit SWAR backends are
 > <sup>6</sup> Contrary to the popular opinion, Python's default `sorted` function works faster than the C and C++ standard libraries.
 > That holds for large lists or tuples of strings, but fails as soon as you need more complex logic, like sorting dictionaries by a string key, or producing the "sorted order" permutation.
 > The latter is very common in database engines and is most similar to `numpy.argsort`.
-> Current StringZilla solution can be at least 4x faster without loss of generality.
+> The current StringZilla solution can be at least 4x faster without loss of generality.
 
 [faq-mersenne-twister]: https://en.wikipedia.org/wiki/Mersenne_Twister
 
@@ -303,28 +309,28 @@ It's split into 2 layers:
 1. StringZilla: single-header C library and C++ wrapper for high-performance string operations.
 2. StringZillas: parallel CPU/GPU backends used for large-batch operations and accelerators.
 
-Having a second C++/CUDA layer greatly simplifies the implementation of similarity scoring and fingerprint functions, that would require too much error-prone boilerplate code in pure C.
+Having a second C++/CUDA layer greatly simplifies the implementation of similarity scoring and fingerprinting functions, which would otherwise require too much error-prone boilerplate code in pure C.
 Both layers are designed to be extremely portable:
 
-- [x] across both Little-Endian and Big-Endian architectures.
+- [x] across both little-endian and big-endian architectures.
 - [x] across 32-bit and 64-bit hardware architectures.
-- [x] across Operating Systems and compilers.
+- [x] across operating systems and compilers.
 - [x] across ASCII and UTF-8 encoded inputs.
 
 Not all features are available across all bindings.
-Consider contributing, if you need a feature that's not yet implemented.
+Consider contributing if you need a feature that's not yet implemented.
 
-|                                | Maturity |   C   |  C++  | Python | Rust  |  JS   | Swift |
-| :----------------------------- | :------: | :---: | :---: | :----: | :---: | :---: | :---: |
-| Substring Search               |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ✅   |   ✅   |
-| Character Set Search           |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ✅   |   ✅   |
-| Sorting & Sequence Operations  |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ⚪   |   ⚪   |
-| Streaming Hashes               |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ✅   |   ✅   |
-| Small String Class             |    🧐     |   ✅   |   ✅   |   ❌    |   ⚪   |   ❌   |   ❌   |
-| Lazy Ranges, Compressed Arrays |    🌳     |   ❌   |   ✅   |   ✅    |   ✅   |   ❌   |   ⚪   |
-|                                |          |       |       |        |       |       |       |  |
-| Parallel Similarity Scoring    |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ⚪   |   ⚪   |
-| Parallel Rolling Fingerprints  |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ⚪   |   ⚪   |
+|                                | Maturity |   C   |  C++  | Python | Rust  |  JS   | Swift |  Go   |
+| :----------------------------- | :------: | :---: | :---: | :----: | :---: | :---: | :---: | :---: |
+| Substring Search               |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ✅   |   ✅   |   ✅   |
+| Character Set Search           |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ✅   |   ✅   |   ✅   |
+| Sorting & Sequence Operations  |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ⚪   |   ⚪   |   ⚪   |
+| Streaming Hashes               |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ✅   |   ✅   |   ✅   |
+| Small String Class             |    🧐     |   ✅   |   ✅   |   ❌    |   ⚪   |   ❌   |   ❌   |   ❌   |
+| Lazy Ranges, Compressed Arrays |    🌳     |   ❌   |   ✅   |   ✅    |   ✅   |   ❌   |   ⚪   |   ⚪   |
+|                                |          |       |       |        |       |       |       |       |
+| Parallel Similarity Scoring    |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ⚪   |   ⚪   |   ⚪   |
+| Parallel Rolling Fingerprints  |    🌳     |   ✅   |   ✅   |   ✅    |   ✅   |   ⚪   |   ⚪   |   ⚪   |
 
 > 🌳 parts are used in production.
 > 🧐 parts are in beta.
@@ -354,8 +360,8 @@ python -c "import stringzillas; print(stringzillas.__capabilities__)"   # for pa
 
 ### Basic Usage
 
-If you've ever used the Python `str`, `bytes`, `bytearray`, `memoryview` class, you'll know what to expect.
-StringZilla's `Str` class is a hybrid of those two, providing `str`-like interface to byte-arrays.
+If you've ever used the Python `str`, `bytes`, `bytearray`, or `memoryview` classes, you'll know what to expect.
+StringZilla's `Str` class is a hybrid of the above, providing a `str`-like interface to byte arrays.
 
 ```python
 from stringzilla import Str, File
@@ -369,9 +375,9 @@ alphabet_array = np.arange(ord("a"), ord("z"), dtype=np.uint8)
 text_from_array = Str(memoryview(alphabet_array))
 ```
 
-The `File` class memory-maps a file from persistent memory without loading its copy into RAM.
+The `File` class memory-maps a file from persistent storage without loading its copy into RAM.
 The contents of that file would remain immutable, and the mapping can be shared by multiple Python processes simultaneously.
-A standard dataset pre-processing use case would be to map a sizeable textual dataset like Common Crawl into memory, spawn child processes, and split the job between them.
+A standard dataset pre-processing use case would be to map a sizable textual dataset like Common Crawl into memory, spawn child processes, and split the job between them.
 
 ### Basic Operations
 
@@ -396,8 +402,8 @@ x: Strs = text.rsplit(separator=' ', maxsplit=sys.maxsize, keepseparator=False)
 x: Strs = text.splitlines(keeplinebreaks=False, maxsplit=sys.maxsize)
 ```
 
-It's important to note, that the last function behavior is slightly different from Python's `str.splitlines`.
-The [native version][faq-splitlines] matches `\n`, `\r`, `\v` or `\x0b`, `\f` or `\x0c`, `\x1c`, `\x1d`, `\x1e`, `\x85`, `\r\n`, `\u2028`, `\u2029`, including 3x two-bytes-long runes.
+It's important to note that the last function's behavior is slightly different from Python's `str.splitlines`.
+The [native version][faq-splitlines] matches `\n`, `\r`, `\v` or `\x0b`, `\f` or `\x0c`, `\x1c`, `\x1d`, `\x1e`, `\x85`, `\r\n`, `\u2028`, `\u2029`, including 3x two-byte-long runes.
 The StringZilla version matches only `\n`, `\v`, `\f`, `\r`, `\x1c`, `\x1d`, `\x1e`, `\x85`, avoiding two-byte-long runes.
 
 [faq-splitlines]: https://docs.python.org/3/library/stdtypes.html#str.splitlines
@@ -438,12 +444,12 @@ sz.translate(image, look_up_table, inplace=True)
 
 ### Hash
 
-Single‑shot and incremental hashing are both supported:
+Single-shot and incremental hashing are both supported:
 
 ```py
 import stringzilla as sz
 
-# One‑shot - stable 64‑bit output across all platforms!
+# One-shot - stable 64-bit output across all platforms!
 one = sz.hash(b"Hello, world!", seed=42)
 
 # Incremental updates return itself; digest does not consume state
@@ -455,7 +461,7 @@ assert one == streamed
 
 ### Collection-Level Operations
 
-Once split into a `Strs` object, you can sort, shuffle, and reorganize the slices, with minimum memory footprint.
+Once split into a `Strs` object, you can sort, shuffle, and reorganize the slices with minimal memory footprint.
 If all the chunks are located in consecutive memory regions, the memory overhead can be as low as 4 bytes per chunk.
 
 ```python
@@ -466,7 +472,7 @@ lines_sorted: Strs = lines.sorted() # returns a new Strs in sorted order
 order: tuple = lines.argsort() # similar to `numpy.argsort`
 ```
 
-Working on [RedPajama][redpajama], addressing 20 Billion annotated english documents, one will need only 160 GB of RAM instead of Terabytes.
+Working on [RedPajama][redpajama], addressing 20 billion annotated English documents, one will need only 160 GB of RAM instead of terabytes.
 Once loaded, the data will be memory-mapped, and can be reused between multiple Python processes without copies.
 And of course, you can use slices to navigate the dataset and shard it between multiple workers.
 
@@ -575,7 +581,7 @@ For proteins ~10k chars, 100 pairs:
 - [EditDistance](https://github.com/roy-ht/editdistance): 32.9s
 - StringZilla: __0.8s__
 
-Using the same proteins for Needleman–Wunsch alignment scores:
+Using the same proteins for Needleman-Wunsch alignment scores:
 
 - [BioPython](https://github.com/biopython/biopython): 25.8s
 - StringZilla: __7.8s__
@@ -605,7 +611,7 @@ for packed_row, packed_row_aminoacid in enumerate(aligner.substitution_matrix.al
         reconstructed_column = ord(packed_column_aminoacid)
         subs_reconstructed[reconstructed_row, reconstructed_column] = subs_packed[packed_row, packed_column]
 
-# Let's pick two examples for of tri-peptides (made of 3 aminoacids)
+# Let's pick two examples of tripeptides (made of 3 amino acids)
 glutathione = "ECG" # Need to rebuild human tissue?
 thyrotropin_releasing_hormone = "QHP" # Or to regulate your metabolism?
 
@@ -879,12 +885,12 @@ To target a different device, use the appropriate `szs_device_scope_init_{cpu_co
 When dealing with GPU backends, make sure to use the "unified memory" allocators exposed as `szs_unified_{alloc,free}`.
 Similar stable C ABIs are exposed for other workloads as well.
 
-- UTF‑8: `szs_levenshtein_distances_utf8_{sequence,u32tape,u64tape}`
-- Needleman–Wunsch: `szs_needleman_wunsch_scores_{sequence,u32tape,u64tape}`
+- UTF-8: `szs_levenshtein_distances_utf8_{sequence,u32tape,u64tape}`
+- Needleman-Wunsch: `szs_needleman_wunsch_scores_{sequence,u32tape,u64tape}`
 - Smith-Waterman: `szs_smith_waterman_scores_{sequence,u32tape,u64tape}`
 
 Moreover, in C++ codebases one can tap into the raw templates implementing that functionality, customizing them with custom executors, SIMD plugins, etc.
-For that include `stringzillas/similarities.hpp` for C++ and `stringzillas/similarities.hpp` for CUDA.
+For that include `stringzillas/similarities.hpp` for C++ and `stringzillas/similarities.cuh` for CUDA.
 
 ```cpp
 #include <stringzillas/similarities.hpp>
@@ -913,12 +919,12 @@ auto _ = pool.try_spawn(std::thread::hardware_concurrency());
 auto _ = engine(tape_a, tape_b, distances, pool);
 ```
 
-All of the potentially-failing StringZillas interfaces return error codes, and none raise C++ exceptions.
+All of the potentially failing StringZillas' interfaces return error codes, and none raise C++ exceptions.
 Parallelism is enabled at both collection-level and within individual pairs of large inputs.
 
 ### Rolling Fingerprints
 
-StringZilla exposes parallel fingerprinting (Min‑Hashes or Count‑Min‑Sketches) via the `stringzillas/stringzillas.h` header. 
+StringZilla exposes parallel fingerprinting (Min-Hashes or Count-Min-Sketches) via the `stringzillas/stringzillas.h` header. 
 Use `szs_device_scope_t` to pick hardware and optionally limit capabilities per engine.
 
 ```c
@@ -943,7 +949,7 @@ szs_device_scope_free(device);
 ```
 
 Moreover, in C++ codebases one can tap into the raw templates implementing that functionality, customizing them with custom executors, SIMD plugins, etc.
-For that include `stringzillas/fingerprints.hpp` for C++ and `stringzillas/fingerprints.hpp` for CUDA.
+For that include `stringzillas/fingerprints.hpp` for C++ and `stringzillas/fingerprints.cuh` for CUDA.
 
 ```cpp
 #include <stringzillas/fingerprints.hpp>
@@ -958,13 +964,14 @@ std::vector<std::string> docs = {"alpha beta", "alpha betta"};
 sz::arrow_strings_tape<char, sz::size_t, std::allocator<char>> tape;
 auto _ = tape.try_assign(docs.begin(), docs.end());
 
-// Run on the current thread with a Rabin–Karp family hasher
+// Run on the current thread with a Rabin-Karp family hasher
 constexpr std::size_t dimensions_k = 256;
+constexpr std::size_t window_width_k = 7;
+using row_t = std::array<sz_u32_t, 256>;
 using fingerprinter_t = szs::floating_rolling_hashers<sz_cap_serial_k, dimensions_k>;
 fingerprinter_t engine;
-auto _ = engine.try_extend(/*window*/ 7, /*dims*/ 256);
-std::array<sz_u32_t, 256> row{};
-std::vector<decltype(row)> hashes(docs.size()), counts(docs.size());
+auto _ = engine.try_extend(window_width_k, dimensions_k);
+std::vector<row_t> hashes(docs.size()), counts(docs.size());
 auto _ = engine(tape, hashes, counts);
 
 // Or run in parallel with a pool
@@ -972,6 +979,17 @@ fork_union::basic_pool_t pool;
 auto _ = pool.try_spawn(std::thread::hardware_concurrency());
 auto _ = engine(tape, hashes, counts, pool);
 ```
+
+### CUDA
+
+StringZilla provides CUDA C++ templates for composable string batch-processing operations.
+Different GPUs have varying warp sizes, shared memory capacities, and register counts, affecting algorithm selection, so it's important to query the `gpu_specs_t` via `gpu_specs_fetch`.
+For memory management, ensure that you use GPU-visible' unified memory` exposed in an STL-compatible manner as a `unified_alloc` template class.
+For error handling, `cuda_status_t` extends the traditional `status_t` with GPU-specific information.
+It's implicitly convertible to `status_t`, so you can use it in places expecting a `status_t`.
+
+Most algorithms can load-balance both a large number of small strings and a small number of large strings.
+Still, with large H100-scale GPUs, it's best to submit thousands of inputs at once.
 
 ### Memory Ownership and Small String Optimization
 
@@ -1321,25 +1339,6 @@ Standard library functions may not offer the most efficient or convenient method
 - `haystack.lookup(sz::look_up_table::identity())`
 - `haystack.lookup(sz::look_up_table::identity(), haystack.data())`
 
-### Levenshtein Edit Distance and Alignment Scores
-
-Levenshtein and Hamming edit distance are provided for both byte-strings and UTF-8 strings.
-The latter will output the distance in Unicode code points, not bytes.
-Needleman-Wunsch alignment scores are only defined for byte-strings.
-
-```cpp
-// Count number of substitutions in same length strings
-sz::hamming_distance(first, second[, upper_bound]) -> std::size_t;
-sz::hamming_distance_utf8(first, second[, upper_bound]) -> std::size_t;
-
-// Count number of insertions, deletions and substitutions
-sz::levenshtein_distance(first, second[, upper_bound[, allocator]]) -> std::size_t;
-sz::levenshtein_distance_utf8(first, second[, upper_bound[, allocator]]) -> std::size_t;
-
-// Substitution-parametrized Needleman-Wunsch global alignment score
-std::int8_t costs[256][256]; // Substitution costs matrix
-sz::alignment_score(first, second, costs[, gap_score[, allocator]) -> std::ptrdiff_t;
-```
 
 ### Sorting in C and C++
 
@@ -1411,10 +1410,15 @@ __`SZ_DEBUG`__:
 > If you want to enable more aggressive bounds-checking, define `SZ_DEBUG` before including the header.
 > If not explicitly set, it will be inferred from the build type.
 
-__`SZ_USE_HASWELL`, `SZ_USE_SKYLAKE`, `SZ_USE_ICE`, `SZ_USE_NEON`, `SZ_USE_SVE`, `SZ_USE_SVE2`__:
+__`SZ_USE_HASWELL`, `SZ_USE_SKYLAKE`, `SZ_USE_ICE`, `SZ_USE_NEON`, `SZ_USE_NEON_AES`, `SZ_USE_SVE`, `SZ_USE_SVE2`, `SZ_USE_SVE2_AES`__:
 
 > One can explicitly disable certain families of SIMD instructions for compatibility purposes.
-> Default values are inferred at compile time.
+> Default values are inferred at compile time depending on compiler support (for dynamic dispatch) and the target architecture (for static dispatch).
+
+__`SZ_USE_CUDA`, `SZ_USE_KEPLER`, `SZ_USE_HOPPER`__:
+
+> One can explicitly disable certain families of PTX instructions for compatibility purposes.
+> Default values are inferred at compile time depending on compiler support (for dynamic dispatch) and the target architecture (for static dispatch).
 
 __`SZ_DYNAMIC_DISPATCH`__:
 
@@ -1516,7 +1520,7 @@ assert_eq!(my_str.sz_find("world"), Some(7));
 assert_eq!(my_cow_str.as_ref().sz_find("world"), Some(7));
 ```
 
-The library also exposes Levenshtein and Hamming edit-distances for byte-arrays and UTF-8 strings, as well as Needleman-Wunsch alignment scores.
+The library also exposes Levenshtein and Hamming edit distances for byte arrays and UTF-8 strings, as well as Needleman-Wunsch alignment scores.
 
 ```rust
 use stringzilla::sz;
@@ -1535,7 +1539,7 @@ sz::levenshtein_distance_utf8("façade", "facade") // 1
 
 ### Hash
 
-Single‑shot and incremental hashing are both supported:
+Single-shot and incremental hashing are both supported:
 
 ```rs
 let mut hasher = sz::Hasher::new(42);
@@ -1677,12 +1681,12 @@ const byteSum = sz.byteSum(haystack); // sum of bytes as BigInt
 
 ### Hash
 
-Single‑shot and incremental hashing are both supported:
+Single-shot and incremental hashing are both supported:
 
 ```js
 import sz from 'stringzilla';
 
-// One‑shot - stable 64‑bit output across all platforms!
+// One-shot - stable 64-bit output across all platforms!
 const hash = sz.hash(Buffer.from('Hello, world!'), 42); // returns BigInt
 
 // Incremental updates - hasher maintains state
@@ -1731,6 +1735,70 @@ hasher.update("Hello, ")
 hasher.update("world!")
 let streamedHash = hasher.digest()
 assert(hash == streamedHash)
+```
+
+## Quick Start: GoLang 🦫
+
+Add the Go binding as a module dependency:
+
+```bash
+go get github.com/ashvardanian/stringzilla/golang@latest
+```
+
+Build the shared C library once, then ensure your runtime can locate it (Linux shown):
+
+```bash
+cmake -B build_shared -D STRINGZILLA_BUILD_SHARED=1 -D CMAKE_BUILD_TYPE=Release
+cmake --build build_shared --target stringzilla_shared --config Release
+export LD_LIBRARY_PATH="$PWD/build_shared:$LD_LIBRARY_PATH"
+```
+
+Use finders (substring, bytes, and sets):
+
+```go
+package main
+
+import (
+    "fmt"
+    sz "github.com/ashvardanian/stringzilla/golang"
+)
+
+func main() {
+    s := "the quick brown fox jumps over the lazy dog"
+
+    // Substrings
+    fmt.Println(sz.Contains(s, "brown"))        // true
+    fmt.Println(sz.Index(s, "the"))             // 0
+    fmt.Println(sz.LastIndex(s, "the"))         // 35
+
+    // Single bytes
+    fmt.Println(sz.IndexByte(s, 'o'))            // 12
+    fmt.Println(sz.LastIndexByte(s, 'o'))        // 41
+
+    // Byte sets
+    fmt.Println(sz.IndexAny(s, "aeiou"))        // 2  (first vowel)
+    fmt.Println(sz.LastIndexAny(s, "aeiou"))    // 43 (last vowel)
+
+    // Counting with/without overlaps
+    fmt.Println(sz.Count("aaaaa", "aa", false)) // 2
+    fmt.Println(sz.Count("aaaaa", "aa", true))  // 4
+    fmt.Println(sz.Count("abc", "", false))     // 4
+    fmt.Println(sz.Bytesum("ABC"), sz.Bytesum("ABCD"))
+}
+```
+
+### Hash
+
+Single-shot and incremental hashing are both supported:
+
+```go
+one := sz.Hash("Hello, world!", 42)
+
+hasher := sz.NewHasher(42)
+hasher.Write([]byte("Hello, "))
+hasher.Write([]byte("world!"))
+streamed := hasher.Digest()
+fmt.Println(one == streamed) // true
 ```
 
 ## Algorithms & Design Decisions 📚
@@ -2019,7 +2087,7 @@ sz.reset_capabilities(sz.__capabilities__)  # Reset to auto-dispatch
 
 ## Contributing 👾
 
-Please check out the [contributing guide](https://github.com/ashvardanian/StringZilla/blob/main/CONTRIBUTING.md) for more details on how to setup the development environment and contribute to this project.
+Please check out the [contributing guide](https://github.com/ashvardanian/StringZilla/blob/main/CONTRIBUTING.md) for more details on how to set up the development environment and contribute to this project.
 If you like this project, you may also enjoy [USearch][usearch], [UCall][ucall], [UForm][uform], and [SimSIMD][simsimd]. 🤗
 
 [usearch]: https://github.com/unum-cloud/usearch
