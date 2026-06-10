@@ -378,10 +378,11 @@ SZ_PUBLIC void sz_move_serial(sz_ptr_t target, sz_cptr_t source, sz_size_t lengt
 #pragma region Haswell Implementation
 
 #if SZ_USE_HASWELL
-#if !defined(_MSC_VER)
+#if defined(__clang__)
+#pragma clang attribute push(__attribute__((target("avx2"))), apply_to = function)
+#elif defined(__GNUC__)
 #pragma GCC push_options
 #pragma GCC target("avx2")
-#pragma clang attribute push(__attribute__((target("avx2"))), apply_to = function)
 #endif
 
 SZ_PUBLIC void sz_fill_haswell(sz_ptr_t target, sz_size_t length, sz_u8_t value) {
@@ -736,8 +737,9 @@ SZ_PUBLIC void sz_lookup_haswell(sz_ptr_t target, sz_size_t length, sz_cptr_t so
     if (length) sz_lookup_serial(target, length, source, lut);
 }
 
-#if !defined(_MSC_VER)
+#if defined(__clang__)
 #pragma clang attribute pop
+#elif defined(__GNUC__)
 #pragma GCC pop_options
 #endif
 #endif            // SZ_USE_HASWELL
@@ -751,10 +753,11 @@ SZ_PUBLIC void sz_lookup_haswell(sz_ptr_t target, sz_size_t length, sz_cptr_t so
 #pragma region Skylake Implementation
 
 #if SZ_USE_SKYLAKE
-#if !defined(_MSC_VER)
+#if defined(__clang__)
+#pragma clang attribute push(__attribute__((target("avx,avx512f,avx512vl,avx512bw,bmi,bmi2"))), apply_to = function)
+#elif defined(__GNUC__)
 #pragma GCC push_options
 #pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "bmi", "bmi2")
-#pragma clang attribute push(__attribute__((target("avx,avx512f,avx512vl,avx512bw,bmi,bmi2"))), apply_to = function)
 #endif
 
 SZ_PUBLIC void sz_fill_skylake(sz_ptr_t target, sz_size_t length, sz_u8_t value) {
@@ -970,8 +973,9 @@ SZ_PUBLIC void sz_move_skylake(sz_ptr_t target, sz_cptr_t source, sz_size_t leng
     }
 }
 
-#if !defined(_MSC_VER)
+#if defined(__clang__)
 #pragma clang attribute pop
+#elif defined(__GNUC__)
 #pragma GCC pop_options
 #endif
 #endif            // SZ_USE_SKYLAKE
@@ -985,11 +989,12 @@ SZ_PUBLIC void sz_move_skylake(sz_ptr_t target, sz_cptr_t source, sz_size_t leng
  */
 #pragma region Ice Lake Implementation
 #if SZ_USE_ICE
-#if !defined(_MSC_VER)
-#pragma GCC push_options
-#pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "avx512dq", "avx512vbmi", "bmi", "bmi2")
+#if defined(__clang__)
 #pragma clang attribute push(__attribute__((target("avx,avx512f,avx512vl,avx512bw,avx512dq,avx512vbmi,bmi,bmi2"))), \
                              apply_to = function)
+#elif defined(__GNUC__)
+#pragma GCC push_options
+#pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "avx512dq", "avx512vbmi", "bmi", "bmi2")
 #endif
 
 SZ_PUBLIC void sz_lookup_ice(sz_ptr_t target, sz_size_t length, sz_cptr_t source, sz_cptr_t lut) {
@@ -1102,8 +1107,9 @@ SZ_PUBLIC void sz_lookup_ice(sz_ptr_t target, sz_size_t length, sz_cptr_t source
     }
 }
 
-#if !defined(_MSC_VER)
+#if defined(__clang__)
 #pragma clang attribute pop
+#elif defined(__GNUC__)
 #pragma GCC pop_options
 #endif
 #endif            // SZ_USE_ICE
@@ -1114,10 +1120,11 @@ SZ_PUBLIC void sz_lookup_ice(sz_ptr_t target, sz_size_t length, sz_cptr_t source
  */
 #pragma region NEON Implementation
 #if SZ_USE_NEON
-#if !defined(_MSC_VER)
+#if defined(__clang__)
+#pragma clang attribute push(__attribute__((target("arch=armv8.2-a+simd"))), apply_to = function)
+#elif defined(__GNUC__)
 #pragma GCC push_options
 #pragma GCC target("arch=armv8.2-a+simd")
-#pragma clang attribute push(__attribute__((target("arch=armv8.2-a+simd"))), apply_to = function)
 #endif
 
 SZ_PUBLIC void sz_copy_neon(sz_ptr_t target, sz_cptr_t source, sz_size_t length) {
@@ -1228,8 +1235,9 @@ SZ_PUBLIC void sz_lookup_neon(sz_ptr_t target, sz_size_t length, sz_cptr_t sourc
     for (; tail_length; target += 1, source += 1, tail_length -= 1) *target = lut[*(sz_u8_t const *)source];
 }
 
-#if !defined(_MSC_VER)
+#if defined(__clang__)
 #pragma clang attribute pop
+#elif defined(__GNUC__)
 #pragma GCC pop_options
 #endif
 #endif            // SZ_USE_NEON
@@ -1240,10 +1248,11 @@ SZ_PUBLIC void sz_lookup_neon(sz_ptr_t target, sz_size_t length, sz_cptr_t sourc
  */
 #pragma region SVE Implementation
 #if SZ_USE_SVE
-#if !defined(_MSC_VER)
+#if defined(__clang__)
+#pragma clang attribute push(__attribute__((target("arch=armv8.2-a+sve"))), apply_to = function)
+#elif defined(__GNUC__)
 #pragma GCC push_options
 #pragma GCC target("arch=armv8.2-a+sve")
-#pragma clang attribute push(__attribute__((target("arch=armv8.2-a+sve"))), apply_to = function)
 #endif
 
 SZ_PUBLIC void sz_fill_sve(sz_ptr_t target, sz_size_t length, sz_u8_t value) {
@@ -1356,8 +1365,9 @@ SZ_PUBLIC void sz_move_sve(sz_ptr_t target, sz_cptr_t source, sz_size_t length) 
 #endif
 }
 
-#if !defined(_MSC_VER)
+#if defined(__clang__)
 #pragma clang attribute pop
+#elif defined(__GNUC__)
 #pragma GCC pop_options
 #endif
 #endif            // SZ_USE_SVE

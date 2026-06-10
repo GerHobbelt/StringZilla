@@ -54,6 +54,7 @@
 #include <iterator>      // `std::distance`
 #include <map>           // `std::map`
 #include <memory>        // `std::allocator`
+#include <numeric>       // `std::accumulate`
 #include <random>        // `std::random_device`
 #include <sstream>       // `std::ostringstream`
 #include <unordered_map> // `std::unordered_map`
@@ -84,7 +85,7 @@ using namespace std::literals; // for ""sv
  *  Instantiate all the templates to make the symbols visible and also check
  *  for weird compilation errors on uncommon paths.
  */
-#if SZ_IS_CPP17_ && __cpp_lib_string_view
+#if SZ_IS_CPP17_ && defined(__cpp_lib_string_view)
 template class std::basic_string_view<char>;
 #endif
 template class sz::basic_string_slice<char>;
@@ -237,17 +238,17 @@ void test_byteset_struct() {
     sz_byteset_t s;
     sz_byteset_init(&s);
 	// fix warning C4805: '==': unsafe mix of type 'sz_bool_t' and type 'bool' in operation
-    assert(sz_byteset_contains(&s, 'a') == false);
+    assert(sz_byteset_contains(&s, 'a') == sz_false_k);
     sz_byteset_add(&s, 'a');
-    assert(sz_byteset_contains(&s, 'a') == true);
+    assert(sz_byteset_contains(&s, 'a') == sz_true_k);
     sz_byteset_add(&s, 'z');
-    assert(sz_byteset_contains(&s, 'z') == true);
+    assert(sz_byteset_contains(&s, 'z') == sz_true_k);
     sz_byteset_invert(&s);
-    assert(sz_byteset_contains(&s, 'a') == false);
-    assert(sz_byteset_contains(&s, 'z') == false);
-    assert(sz_byteset_contains(&s, 'b') == true);
+    assert(sz_byteset_contains(&s, 'a') == sz_false_k);
+    assert(sz_byteset_contains(&s, 'z') == sz_false_k);
+    assert(sz_byteset_contains(&s, 'b') == sz_true_k);
     sz_byteset_init_ascii(&s);
-    assert(sz_byteset_contains(&s, 'A') == true);
+    assert(sz_byteset_contains(&s, 'A') == sz_true_k);
 }
 
 /**
@@ -375,7 +376,7 @@ void test_equivalence() {
         sz_hash_state_stream_ice, sz_hash_state_fold_ice);
     test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_ice);
 #endif
-#if SZ_USE_NEON
+#if SZ_USE_NEON_AES
     test_hash_equivalence(                                      //
         sz_hash_serial, sz_hash_state_init_serial,              //
         sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
@@ -383,7 +384,7 @@ void test_equivalence() {
         sz_hash_state_stream_neon, sz_hash_state_fold_neon);
     test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_neon);
 #endif
-#if SZ_USE_SVE2
+#if SZ_USE_SVE2_AES
     test_hash_equivalence(                                      //
         sz_hash_serial, sz_hash_state_init_serial,              //
         sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
@@ -830,7 +831,7 @@ void test_stl_compatibility_for_reads() {
     assert(str("b") >= str("a"));
     assert(str("a") < str("aa"));
 
-#if SZ_IS_CPP20_ && __cpp_lib_three_way_comparison
+#if SZ_IS_CPP20_ && defined(__cpp_lib_three_way_comparison)
     // Spaceship operator instead of conventional comparions.
     assert((str("a") <=> str("b")) == std::strong_ordering::less);
     assert((str("b") <=> str("a")) == std::strong_ordering::greater);
@@ -873,7 +874,7 @@ void test_stl_compatibility_for_reads() {
     assert(str("hello world").compare(6, 5, "worlds", 5) == 0);    // Substring "world" in both strings
     assert(str("hello world").compare(6, 5, "worlds", 6) < 0);     // Substring "world" is less than "worlds"
 
-#if SZ_IS_CPP20_ && __cpp_lib_starts_ends_with
+#if SZ_IS_CPP20_ && defined(__cpp_lib_starts_ends_with)
     // Prefix and suffix checks against strings.
     assert(str("https://cppreference.com").starts_with(str("http")) == true);
     assert(str("https://cppreference.com").starts_with(str("ftp")) == false);
@@ -893,7 +894,7 @@ void test_stl_compatibility_for_reads() {
     assert(str("string_view").ends_with("View") == false);
 #endif
 
-#if SZ_IS_CPP23_ && __cpp_lib_string_contains
+#if SZ_IS_CPP23_ && defined(__cpp_lib_string_contains)
     // Checking basic substring presence.
     assert(str("hello").contains(str("ell")) == true);
     assert(str("hello").contains(str("oll")) == false);
@@ -1078,7 +1079,7 @@ void test_stl_conversions() {
         sz_unused_(sz);
         sz_unused_(szv);
     }
-#if SZ_IS_CPP17_ && __cpp_lib_string_view
+#if SZ_IS_CPP17_ && defined(__cpp_lib_string_view)
     // From STL `string_view` to StringZilla and vice-versa.
     {
         std::string_view stl {"hello"};
@@ -1565,7 +1566,7 @@ void test_search() {
     }
 }
 
-#if SZ_IS_CPP17_ && __cpp_lib_string_view
+#if SZ_IS_CPP17_ && defined(__cpp_lib_string_view)
 
 /**
  *  Evaluates the correctness of a "matcher", searching for all the occurrences of the `needle_stl`
@@ -1977,7 +1978,6 @@ int main(int argc, char const **argv) {
     std::printf("- Uses NEON: %s \n", SZ_USE_NEON ? "yes" : "no");
     std::printf("- Uses SVE: %s \n", SZ_USE_SVE ? "yes" : "no");
     std::printf("- Uses SVE2: %s \n", SZ_USE_SVE2 ? "yes" : "no");
-    std::printf("- Uses OpenMP: %s \n", SZ_USE_OPENMP ? "yes" : "no");
     std::printf("- Uses CUDA: %s \n", SZ_USE_CUDA ? "yes" : "no");
 
 #if SZ_USE_CUDA
@@ -2027,7 +2027,7 @@ int main(int argc, char const **argv) {
     test_replacements();
 
 // Compatibility with STL
-#if SZ_IS_CPP17_ && __cpp_lib_string_view
+#if SZ_IS_CPP17_ && defined(__cpp_lib_string_view)
     test_stl_compatibility_for_reads<std::string_view>();
 #endif
     test_stl_compatibility_for_reads<std::string>();
@@ -2052,7 +2052,7 @@ int main(int argc, char const **argv) {
     test_stl_conversions();
     test_comparisons();
     test_search();
-#if SZ_IS_CPP17_ && __cpp_lib_string_view
+#if SZ_IS_CPP17_ && defined(__cpp_lib_string_view)
     test_search_with_misaligned_repetitions();
 #endif
 

@@ -1,5 +1,5 @@
 /**
- *  @brief  OpenMP-accelerated string similarity scores in C++.
+ *  @brief  Parallel string similarity scores in C++.
  *  @file   similarities.hpp
  *  @author Ash Vardanian
  *
@@ -73,7 +73,7 @@
 #include "stringzilla/memory.h"   // `sz_move_serial`
 #include "stringzillas/types.hpp" // `sz::executor_like`
 
-#include <atomic>      // `std::atomic` to synchronize OpenMP threads
+#include <atomic>      // `std::atomic` to synchronize threads
 #include <type_traits> // `std::enable_if_t` for meta-programming
 #include <limits>      // `std::numeric_limits` for numeric types
 #include <iterator>    // `std::iterator_traits` for iterators
@@ -330,7 +330,7 @@ struct tile_scorer;
 
 /**
  *  @brief  Alignment Score and Edit Distance algorithm evaluating the Dynamic Programming matrix
- *          @b (anti)diagonal-by-(anti)diagonal on a CPU, leveraging OpenMP.
+ *          @b (anti)diagonal-by-(anti)diagonal on a CPU.
  *
  *  Can be used for both global and local alignment, like Needleman-Wunsch and Smith-Waterman.
  *  Can be used for both linear and affine gap penalties.
@@ -346,7 +346,7 @@ struct tile_scorer;
  *  @tparam allocator_type_ A default-constructible allocator type for the internal buffers.
  *  @tparam objective_ Whether to minimize the distance or maximize the score.
  *  @tparam locality_ Whether to use the global alignment algorithm or the local one.
- *  @tparam capability_ Whether to use OpenMP for @b multi-threading or some form of @b SIMD vectorization, or both.
+ *  @tparam capability_ Whether to use @b multi-threading or some form of @b SIMD vectorization, or both.
  *  @tparam enable_ Used to enable/disable the specialization.
  */
 template <                                                       //
@@ -379,12 +379,12 @@ struct diagonal_walker;
  *  @tparam allocator_type_ A default-constructible allocator type for the internal buffers.
  *  @tparam objective_ Whether to minimize the distance or maximize the score.
  *  @tparam locality_ Whether to use the global alignment algorithm or the local one.
- *  @tparam capability_ Whether to use OpenMP for @b multi-threading or some form of @b SIMD vectorization, or both.
+ *  @tparam capability_ Whether to use @b multi-threading or some form of @b SIMD vectorization, or both.
  *  @tparam enable_ Used to enable/disable the specialization.
  *
  *  @note   The API of this algorithm is a bit weird, but it's designed to minimize the reliance on the definitions
  *          in the `stringzilla.hpp` header, making compilation times shorter for the end-user.
- *  @sa     For lower-level API, check `sz_levenshtein_distance[_utf8]` and `sz_needleman_wunsch_score`.
+ *  @sa     For lower-level API, check `szs_levenshtein_distance[_utf8]` and `szs_needleman_wunsch_score`.
  *  @sa     For simplicity, use the `sz::levenshtein_distance[_utf8]` and `sz::needleman_wunsch_score`.
  *  @sa     For bulk API, use `sz::levenshtein_distances[_utf8]`.
  */
@@ -405,7 +405,7 @@ template <                                                       //
 struct horizontal_walker;
 
 /**
- *  @brief  Computes one or many pairwise Levenshtein distances in parallel using the OpenMP backend.
+ *  @brief  Computes one or many pairwise Levenshtein distances in parallel using the CPU backend.
  *          For pairs of very large strings, all cores cooperate to compute one distance maximizing
  *          cache hits. For smaller strings, each core computes its own distance.
  */
@@ -466,7 +466,7 @@ struct smith_waterman_scores;
 using malloc_t = std::allocator<char>;
 
 /**
- *  In non-SIMD backends we still leverage OpenMP for parallelism.
+ *  In non-SIMD backends we still leverage multi-threading for parallelism.
  */
 using levenshtein_serial_t = levenshtein_distances<char, linear_gap_costs_t, malloc_t, sz_cap_serial_k>;
 using levenshtein_utf8_serial_t = levenshtein_distances_utf8<char, linear_gap_costs_t, malloc_t, sz_cap_serial_k>;
@@ -1533,10 +1533,10 @@ struct horizontal_walker<char_type_, score_type_, substituter_type_, affine_gap_
             result_ref = 0;
             if constexpr (locality_k == sz_similarity_global_k) {
                 if (!first.empty() && second.empty()) {
-                    result_ref = gap_costs_.open + gap_costs_.extend * (first.size() - 1);
+                    result_ref = static_cast<score_t>(gap_costs_.open + gap_costs_.extend * (first.size() - 1));
                 }
                 else if (first.empty() && !second.empty()) {
-                    result_ref = gap_costs_.open + gap_costs_.extend * (second.size() - 1);
+                    result_ref = static_cast<score_t>(gap_costs_.open + gap_costs_.extend * (second.size() - 1));
                 }
             }
             return status_t::success_k;
@@ -1616,7 +1616,7 @@ struct horizontal_walker<char_type_, score_type_, substituter_type_, affine_gap_
 #pragma region - Pairwise Algorithms on CPU
 
 /**
- *  @brief  Computes the @b byte-level Levenshtein distance between two strings using the OpenMP backend.
+ *  @brief  Computes the @b byte-level Levenshtein distance between two strings using the CPU backend.
  *  @sa     `levenshtein_distance_utf8` for UTF-8 strings.
  *
  *  @tparam char_type_ Can be any POD integer type, but @b `char` and @b `sz_rune_t` are preferred.
@@ -1737,7 +1737,7 @@ struct levenshtein_distance {
 };
 
 /**
- *  @brief  Computes the @b rune-level Levenshtein distance between two UTF-8 strings using the OpenMP backend.
+ *  @brief  Computes the @b rune-level Levenshtein distance between two UTF-8 strings using the CPU backend.
  *  @sa     `levenshtein_distance` for binary strings.
  */
 template <                                         //
@@ -1890,7 +1890,7 @@ struct levenshtein_distance_utf8 {
 };
 
 /**
- *  @brief  Computes the @b byte-level Needleman-Wunsch score between two strings using the OpenMP backend.
+ *  @brief  Computes the @b byte-level Needleman-Wunsch score between two strings using the CPU backend.
  *  @sa     `levenshtein_distance` for uniform substitution and gap costs.
  */
 template <                                              //
@@ -1964,7 +1964,7 @@ struct needleman_wunsch_score {
 
         // When dealing with larger arrays, we need to differentiate kernel with different cost aggregation types.
         // Smaller ones will overflow for larger inputs, but using larger-than-needed types will waste memory.
-        else if (requirements.bytes_per_cell == 2) {
+        else if (requirements.bytes_per_cell <= 2) {
             sz_i16_t result_i16 = std::numeric_limits<sz_i16_t>::min();
             status = diagonal_i16_t {substituter_, gap_costs_, alloc_}(first, second, result_i16, executor);
             if (status == status_t::success_k) result_ref = result_i16;
@@ -1985,7 +1985,7 @@ struct needleman_wunsch_score {
 };
 
 /**
- *  @brief  Computes the @b byte-level Needleman-Wunsch score between two strings using the OpenMP backend.
+ *  @brief  Computes the @b byte-level Needleman-Wunsch score between two strings using the CPU backend.
  *  @sa     `levenshtein_distance` for uniform substitution and gap costs.
  */
 template <                                              //
@@ -2066,7 +2066,7 @@ struct smith_waterman_score {
 
         // When dealing with larger arrays, we need to differentiate kernel with different cost aggregation types.
         // Smaller ones will overflow for larger inputs, but using larger-than-needed types will waste memory.
-        else if (requirements.bytes_per_cell == 2) {
+        else if (requirements.bytes_per_cell <= 2) {
             sz_i16_t result_i16 = std::numeric_limits<sz_i16_t>::min();
             status_t status = diagonal_i16_t {substituter_, gap_costs_, alloc_}(first, second, result_i16, executor);
             if (status != status_t::success_k) return status;
@@ -2576,10 +2576,13 @@ struct error_costs_26x26ascii_t {
  */
 #pragma region Ice Lake Implementation
 #if SZ_USE_ICE
-#pragma GCC push_options
-#pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "avx512dq", "avx512vbmi", "bmi", "bmi2")
+#if defined(__clang__)
 #pragma clang attribute push(__attribute__((target("avx,avx512f,avx512vl,avx512bw,avx512dq,avx512vbmi,bmi,bmi2"))), \
                              apply_to = function)
+#elif defined(__GNUC__)
+#pragma GCC push_options
+#pragma GCC target("avx", "avx512f", "avx512vl", "avx512bw", "avx512dq", "avx512vbmi", "bmi", "bmi2")
+#endif
 
 /**
  *  @brief Variant of `tile_scorer` - Minimizes Levenshtein distance for inputs under 256 bytes.
@@ -2592,7 +2595,8 @@ struct tile_scorer<char const *, char const *, sz_u8_t, uniform_substitution_cos
     : public tile_scorer<char const *, char const *, sz_u8_t, uniform_substitution_costs_t, linear_gap_costs_t,
                          sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void> {
 
-    using tile_scorer_t::tile_scorer; // Make the constructors visible
+    using tile_scorer<char const *, char const *, sz_u8_t, uniform_substitution_costs_t, linear_gap_costs_t,
+                      sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void>::tile_scorer;
 
     static constexpr sz_similarity_objective_t objective_k = sz_minimize_distance_k;
     static constexpr sz_similarity_locality_t locality_k = sz_similarity_global_k;
@@ -2739,7 +2743,8 @@ struct tile_scorer<sz_rune_t const *, sz_rune_t const *, sz_u8_t, uniform_substi
     : public tile_scorer<sz_rune_t const *, sz_rune_t const *, sz_u8_t, uniform_substitution_costs_t,
                          linear_gap_costs_t, sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void> {
 
-    using tile_scorer_t::tile_scorer; // Make the constructors visible
+    using tile_scorer<sz_rune_t const *, sz_rune_t const *, sz_u8_t, uniform_substitution_costs_t, linear_gap_costs_t,
+                      sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void>::tile_scorer;
 
     static constexpr sz_similarity_objective_t objective_k = sz_minimize_distance_k;
     static constexpr sz_similarity_locality_t locality_k = sz_similarity_global_k;
@@ -2884,7 +2889,8 @@ struct tile_scorer<char const *, char const *, sz_u16_t, uniform_substitution_co
     : public tile_scorer<char const *, char const *, sz_u16_t, uniform_substitution_costs_t, linear_gap_costs_t,
                          sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void> {
 
-    using tile_scorer_t::tile_scorer; // Make the constructors visible
+    using tile_scorer<char const *, char const *, sz_u16_t, uniform_substitution_costs_t, linear_gap_costs_t,
+                      sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void>::tile_scorer;
 
     static constexpr sz_similarity_objective_t objective_k = sz_minimize_distance_k;
     static constexpr sz_similarity_locality_t locality_k = sz_similarity_global_k;
@@ -3026,7 +3032,8 @@ struct tile_scorer<sz_rune_t const *, sz_rune_t const *, sz_u16_t, uniform_subst
     : public tile_scorer<sz_rune_t const *, sz_rune_t const *, sz_u16_t, uniform_substitution_costs_t,
                          linear_gap_costs_t, sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void> {
 
-    using tile_scorer_t::tile_scorer; // Make the constructors visible
+    using tile_scorer<sz_rune_t const *, sz_rune_t const *, sz_u16_t, uniform_substitution_costs_t, linear_gap_costs_t,
+                      sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void>::tile_scorer;
 
     static constexpr sz_similarity_objective_t objective_k = sz_minimize_distance_k;
     static constexpr sz_similarity_locality_t locality_k = sz_similarity_global_k;
@@ -3172,7 +3179,8 @@ struct tile_scorer<char const *, char const *, sz_u32_t, uniform_substitution_co
     : public tile_scorer<char const *, char const *, sz_u32_t, uniform_substitution_costs_t, linear_gap_costs_t,
                          sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void> {
 
-    using tile_scorer_t::tile_scorer; // Make the constructors visible
+    using tile_scorer<char const *, char const *, sz_u32_t, uniform_substitution_costs_t, linear_gap_costs_t,
+                      sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void>::tile_scorer;
 
     static constexpr sz_similarity_objective_t objective_k = sz_minimize_distance_k;
     static constexpr sz_similarity_locality_t locality_k = sz_similarity_global_k;
@@ -3317,7 +3325,8 @@ struct tile_scorer<char const *, char const *, sz_u8_t, uniform_substitution_cos
     : public tile_scorer<char const *, char const *, sz_u8_t, uniform_substitution_costs_t, affine_gap_costs_t,
                          sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void> {
 
-    using tile_scorer_t::tile_scorer; // Make the constructors visible
+    using tile_scorer<char const *, char const *, sz_u8_t, uniform_substitution_costs_t, affine_gap_costs_t,
+                      sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void>::tile_scorer;
 
     static constexpr sz_similarity_objective_t objective_k = sz_minimize_distance_k;
     static constexpr sz_similarity_locality_t locality_k = sz_similarity_global_k;
@@ -3433,7 +3442,8 @@ struct tile_scorer<char const *, char const *, sz_u16_t, uniform_substitution_co
     : public tile_scorer<char const *, char const *, sz_u16_t, uniform_substitution_costs_t, affine_gap_costs_t,
                          sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void> {
 
-    using tile_scorer_t::tile_scorer; // Make the constructors visible
+    using tile_scorer<char const *, char const *, sz_u16_t, uniform_substitution_costs_t, affine_gap_costs_t,
+                      sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void>::tile_scorer;
 
     static constexpr sz_similarity_objective_t objective_k = sz_minimize_distance_k;
     static constexpr sz_similarity_locality_t locality_k = sz_similarity_global_k;
@@ -3550,7 +3560,8 @@ struct tile_scorer<char const *, char const *, sz_u32_t, uniform_substitution_co
     : public tile_scorer<char const *, char const *, sz_u32_t, uniform_substitution_costs_t, affine_gap_costs_t,
                          sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void> {
 
-    using tile_scorer_t::tile_scorer; // Make the constructors visible
+    using tile_scorer<char const *, char const *, sz_u32_t, uniform_substitution_costs_t, affine_gap_costs_t,
+                      sz_minimize_distance_k, sz_similarity_global_k, sz_cap_serial_k, void>::tile_scorer;
 
     static constexpr sz_similarity_objective_t objective_k = sz_minimize_distance_k;
     static constexpr sz_similarity_locality_t locality_k = sz_similarity_global_k;
@@ -3664,7 +3675,7 @@ struct tile_scorer<char const *, char const *, sz_u32_t, uniform_substitution_co
 };
 
 /**
- *  @brief  Computes the @b byte-level Levenshtein distance between two strings using the OpenMP backend.
+ *  @brief  Computes the @b byte-level Levenshtein distance between two strings using the CPU backend.
  *  @sa     `levenshtein_distance_utf8` for UTF-8 strings.
  */
 template <typename gap_costs_type_, typename allocator_type_, sz_capability_t capability_>
@@ -3751,7 +3762,7 @@ struct levenshtein_distance<char, gap_costs_type_, allocator_type_, capability_,
 };
 
 /**
- *  @brief  Computes the @b rune-level Levenshtein distance between two UTF-8 strings using the OpenMP backend.
+ *  @brief  Computes the @b rune-level Levenshtein distance between two UTF-8 strings using the CPU backend.
  *  @sa     `levenshtein_distance` for binary strings.
  */
 template <typename allocator_type_, sz_capability_t capability_>
@@ -4417,8 +4428,11 @@ struct smith_waterman_score<char, error_costs_256x256_t, linear_gap_costs_t, all
     }
 };
 
+#if defined(__clang__)
 #pragma clang attribute pop
+#elif defined(__GNUC__)
 #pragma GCC pop_options
+#endif
 #endif            // SZ_USE_ICE
 #pragma endregion // Ice Lake Implementation
 
