@@ -1256,6 +1256,7 @@ SZ_INTERNAL __mmask64 sz_u64_clamp_mask_until_(sz_size_t n) {
 #pragma GCC pop_options
 #endif
 #endif
+#endif
 
 /**
  *  @brief  Byte-level equality comparison between two 64-bit integers.
