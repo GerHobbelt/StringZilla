@@ -257,11 +257,11 @@ void test_byteset_struct() {
  *  The test covers increasingly long and complex strings, starting with "abcabc..." repetitions and
  *  progressing towards corner cases like empty strings, all-zero inputs, zero seeds, and so on.
  */
-void test_hash_equivalence(                                             //
-    sz_hash_t hash_base, sz_hash_state_init_t init_base,                //
-    sz_hash_state_stream_t stream_base, sz_hash_state_fold_t fold_base, //
-    sz_hash_t hash_simd, sz_hash_state_init_t init_simd,                //
-    sz_hash_state_stream_t stream_simd, sz_hash_state_fold_t fold_simd) {
+void test_hash_equivalence(                                               //
+    sz_hash_t hash_base, sz_hash_state_init_t init_base,                  //
+    sz_hash_state_update_t stream_base, sz_hash_state_digest_t fold_base, //
+    sz_hash_t hash_simd, sz_hash_state_init_t init_simd,                  //
+    sz_hash_state_update_t stream_simd, sz_hash_state_digest_t fold_simd) {
 
     auto test_on_seed = [&](std::string text, sz_u64_t seed) {
         // Compute the entire hash at once, expecting the same output
@@ -353,43 +353,43 @@ void test_equivalence() {
     assert(sz_hash_serial("abcdefgh", 8, 0) != sz_hash_serial("abcdefgh", 8, 7));
 
 #if SZ_USE_HASWELL
-    test_hash_equivalence(                                      //
-        sz_hash_serial, sz_hash_state_init_serial,              //
-        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
-        sz_hash_haswell, sz_hash_state_init_haswell,            //
-        sz_hash_state_stream_haswell, sz_hash_state_fold_haswell);
+    test_hash_equivalence(                                        //
+        sz_hash_serial, sz_hash_state_init_serial,                //
+        sz_hash_state_update_serial, sz_hash_state_digest_serial, //
+        sz_hash_haswell, sz_hash_state_init_haswell,              //
+        sz_hash_state_update_haswell, sz_hash_state_digest_haswell);
     test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_haswell);
 #endif
 #if SZ_USE_SKYLAKE
-    test_hash_equivalence(                                      //
-        sz_hash_serial, sz_hash_state_init_serial,              //
-        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
-        sz_hash_skylake, sz_hash_state_init_skylake,            //
-        sz_hash_state_stream_skylake, sz_hash_state_fold_skylake);
+    test_hash_equivalence(                                        //
+        sz_hash_serial, sz_hash_state_init_serial,                //
+        sz_hash_state_update_serial, sz_hash_state_digest_serial, //
+        sz_hash_skylake, sz_hash_state_init_skylake,              //
+        sz_hash_state_update_skylake, sz_hash_state_digest_skylake);
     test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_skylake);
 #endif
 #if SZ_USE_ICE
-    test_hash_equivalence(                                      //
-        sz_hash_serial, sz_hash_state_init_serial,              //
-        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
-        sz_hash_ice, sz_hash_state_init_ice,                    //
-        sz_hash_state_stream_ice, sz_hash_state_fold_ice);
+    test_hash_equivalence(                                        //
+        sz_hash_serial, sz_hash_state_init_serial,                //
+        sz_hash_state_update_serial, sz_hash_state_digest_serial, //
+        sz_hash_ice, sz_hash_state_init_ice,                      //
+        sz_hash_state_update_ice, sz_hash_state_digest_ice);
     test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_ice);
 #endif
 #if SZ_USE_NEON_AES
-    test_hash_equivalence(                                      //
-        sz_hash_serial, sz_hash_state_init_serial,              //
-        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
-        sz_hash_neon, sz_hash_state_init_neon,                  //
-        sz_hash_state_stream_neon, sz_hash_state_fold_neon);
+    test_hash_equivalence(                                        //
+        sz_hash_serial, sz_hash_state_init_serial,                //
+        sz_hash_state_update_serial, sz_hash_state_digest_serial, //
+        sz_hash_neon, sz_hash_state_init_neon,                    //
+        sz_hash_state_update_neon, sz_hash_state_digest_neon);
     test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_neon);
 #endif
 #if SZ_USE_SVE2_AES
-    test_hash_equivalence(                                      //
-        sz_hash_serial, sz_hash_state_init_serial,              //
-        sz_hash_state_stream_serial, sz_hash_state_fold_serial, //
-        sz_hash_sve2, sz_hash_state_init_sve2,                  //
-        sz_hash_state_stream_sve2, sz_hash_state_fold_sve2);
+    test_hash_equivalence(                                        //
+        sz_hash_serial, sz_hash_state_init_serial,                //
+        sz_hash_state_update_serial, sz_hash_state_digest_serial, //
+        sz_hash_sve2, sz_hash_state_init_sve2,                    //
+        sz_hash_state_update_sve2, sz_hash_state_digest_sve2);
     test_random_generator_equivalence(sz_fill_random_serial, sz_fill_random_sve2);
 #endif
 };
@@ -792,6 +792,9 @@ void test_stl_compatibility_for_reads() {
     assert(str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-").find_last_of("xyz") == 25);  // sets
     assert(str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-").find_last_of("XYZ") == 51);  // sets
 
+    // Corner case behaviors for long strings
+    assert(str(258, '0').find(str(256, '1')) == str::npos);
+
     // clang-format off
     // Using single-byte non-ASCII values, e.g., À (0xC0), Æ (0xC6)
     assert(str("abcdefgh" "\x01" "\xC6" "ijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" "\xC0" "\xFA" "0123456789+-", 68).find_first_of("\xC6\xC7") == 9);  // sets
@@ -982,6 +985,33 @@ void test_stl_compatibility_for_updates() {
     assert(str().max_size() > 0);
     assert(str().get_allocator() == std::allocator<char>());
     assert(std::strcmp(str("c_str").c_str(), "c_str") == 0);
+
+#if SZ_IS_CPP23_ && defined(__cpp_lib_string_resize_and_overwrite)
+    // Test C++23 resize and overwrite functionality
+    assert_scoped(str s("hello"),
+                  s.resize_and_overwrite(10,
+                                         [](char *p, std::size_t count) noexcept {
+                                             std::memset(p, 'X', count);
+                                             return count;
+                                         }),
+                  s.size() == 10 && s == "XXXXXXXXXX");
+
+    assert_scoped(str s("test"),
+                  s.resize_and_overwrite(8,
+                                         [](char *p, std::size_t) noexcept {
+                                             std::strcpy(p, "ABCDE");
+                                             return 5;
+                                         }),
+                  s.size() == 5 && s == "ABCDE");
+
+    assert_scoped(str s("orig"),
+                  s.try_resize_and_overwrite(6,
+                                             [](char *p, std::size_t count) noexcept {
+                                                 std::strcpy(p, "works!");
+                                                 return count;
+                                             }),
+                  s.size() == 6 && s == "works!");
+#endif
 
     // On 32-bit systems the base capacity can be larger than our `z::string::min_capacity`.
     // It's true for MSVC: https://github.com/ashvardanian/StringZilla/issues/168
@@ -1552,18 +1582,6 @@ void test_search() {
     assert(rsplits[0] == "");
     assert(rsplits[1] == "c");
     assert(rsplits[4] == "");
-
-    // Testing the corner case for a needle length of 256
-    // the test will fail if this causes an infinite loop
-    {
-        std::string s1(258, '0');
-        std::string s2(256, '1');
-
-        sz::string_view haystack = s1;
-        sz::string_view needle = s2;
-
-        assert(haystack.find(needle) == sz::string_view::npos);
-    }
 }
 
 #if SZ_IS_CPP17_ && defined(__cpp_lib_string_view)

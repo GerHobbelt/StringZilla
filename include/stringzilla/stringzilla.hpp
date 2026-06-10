@@ -24,15 +24,15 @@
  *          https://lemire.me/blog/2024/07/26/safer-code-in-c-with-lifetime-bounds/
  */
 #if !defined(__has_cpp_attribute)
-#define sz_lifetime_bound
+#define sz_lifetime_bound_
 #elif __has_cpp_attribute(msvc::lifetimebound)
-#define sz_lifetime_bound [[msvc::lifetimebound]]
+#define sz_lifetime_bound_ [[msvc::lifetimebound]]
 #elif __has_cpp_attribute(clang::lifetimebound)
-#define sz_lifetime_bound [[clang::lifetimebound]]
+#define sz_lifetime_bound_ [[clang::lifetimebound]]
 #elif __has_cpp_attribute(lifetimebound)
-#define sz_lifetime_bound [[lifetimebound]]
+#define sz_lifetime_bound_ [[lifetimebound]]
 #else
-#define sz_lifetime_bound
+#define sz_lifetime_bound_
 #endif
 
 #if !SZ_AVOID_STL
@@ -1406,6 +1406,8 @@ class basic_string_slice {
         length_ -= n;
     }
 
+#if !SZ_AVOID_STL
+
     /**  @brief Added for STL compatibility. */
     string_slice substr() const noexcept { return *this; }
 
@@ -1440,6 +1442,8 @@ class basic_string_slice {
         sz_copy((sz_ptr_t)destination, start_ + n, count);
         return count;
     }
+
+#endif // !SZ_AVOID_STL
 
 #pragma endregion
 
@@ -1981,7 +1985,7 @@ class basic_string_slice {
  *      * `sat`, `sub`, and element access has non-const overloads returning references to mutable objects.
  *
  *  Functions defined for `basic_string`, but not present in `basic_string_slice`:
- *      * `replace`, `insert`, `erase`, `append`, `push_back`, `pop_back`, `resize`, `shrink_to_fit`... from STL,
+ *      * `replace`, `insert`, `erase`, `append`, `push_back`, `pop_back`, `resize`
  *      * `try_` exception-free "try" operations that returning non-zero values on success,
  *      * `replace_all` and `erase_all` similar to Boost,
  *      * `translate` - character mapping,
@@ -2029,7 +2033,7 @@ class basic_string {
         raise(_with_alloc([&](sz_alloc_type &alloc) {
             return (start = sz_string_init_length(&string_, length, &alloc)) ? sz_success_k : sz_bad_alloc_k;
         }));
-        sz_fill(start, length, *(sz_u8_t *)&value);
+        sz_fill(start, length, sz_bitcast_(sz_u8_t, value));
     }
 
     void init(string_view other) noexcept(false) {
@@ -2109,6 +2113,7 @@ class basic_string {
 
     basic_string(basic_string &&other) noexcept { move(other); }
     basic_string &operator=(basic_string &&other) noexcept {
+        if (this == &other) return *this;
         if (!is_internal()) {
             _with_alloc([&](sz_alloc_type &alloc) {
                 sz_string_free(&string_, &alloc);
@@ -2201,8 +2206,6 @@ class basic_string {
 
 #endif
 
-#endif
-
     template <typename first_type, typename second_type>
     explicit basic_string(concatenation<first_type, second_type> const &expression) noexcept(false) {
         raise(_with_alloc([&](sz_alloc_type &alloc) {
@@ -2219,48 +2222,54 @@ class basic_string {
         return *this;
     }
 
+#endif // !SZ_AVOID_STL
+
 #pragma endregion
 
 #pragma region Iterators and Accessors
 
-    iterator begin() noexcept sz_lifetime_bound { return iterator(data()); }
-    const_iterator begin() const noexcept sz_lifetime_bound { return const_iterator(data()); }
-    const_iterator cbegin() const noexcept sz_lifetime_bound { return const_iterator(data()); }
+    iterator begin() noexcept sz_lifetime_bound_ { return iterator(data()); }
+    const_iterator begin() const noexcept sz_lifetime_bound_ { return const_iterator(data()); }
+    const_iterator cbegin() const noexcept sz_lifetime_bound_ { return const_iterator(data()); }
 
     // As we are need both `data()` and `size()`, going through `operator string_view()`
     // and `sz_string_unpack` is faster than separate invocations.
-    iterator end() noexcept sz_lifetime_bound { return span().end(); }
-    const_iterator end() const noexcept sz_lifetime_bound { return view().end(); }
-    const_iterator cend() const noexcept sz_lifetime_bound { return view().end(); }
+    iterator end() noexcept sz_lifetime_bound_ { return span().end(); }
+    const_iterator end() const noexcept sz_lifetime_bound_ { return view().end(); }
+    const_iterator cend() const noexcept sz_lifetime_bound_ { return view().end(); }
 
-    reverse_iterator rbegin() noexcept sz_lifetime_bound { return span().rbegin(); }
-    const_reverse_iterator rbegin() const noexcept sz_lifetime_bound { return view().rbegin(); }
-    const_reverse_iterator crbegin() const noexcept sz_lifetime_bound { return view().crbegin(); }
+    reverse_iterator rbegin() noexcept sz_lifetime_bound_ { return span().rbegin(); }
+    const_reverse_iterator rbegin() const noexcept sz_lifetime_bound_ { return view().rbegin(); }
+    const_reverse_iterator crbegin() const noexcept sz_lifetime_bound_ { return view().crbegin(); }
 
-    reverse_iterator rend() noexcept sz_lifetime_bound { return span().rend(); }
-    const_reverse_iterator rend() const noexcept sz_lifetime_bound { return view().rend(); }
-    const_reverse_iterator crend() const noexcept sz_lifetime_bound { return view().crend(); }
+    reverse_iterator rend() noexcept sz_lifetime_bound_ { return span().rend(); }
+    const_reverse_iterator rend() const noexcept sz_lifetime_bound_ { return view().rend(); }
+    const_reverse_iterator crend() const noexcept sz_lifetime_bound_ { return view().crend(); }
 
-    reference operator[](size_type pos) noexcept sz_lifetime_bound { return string_.internal.start[pos]; }
-    const_reference operator[](size_type pos) const noexcept sz_lifetime_bound { return string_.internal.start[pos]; }
+    reference operator[](size_type pos) noexcept sz_lifetime_bound_ { return string_.internal.start[pos]; }
+    const_reference operator[](size_type pos) const noexcept sz_lifetime_bound_ { return string_.internal.start[pos]; }
 
-    reference front() noexcept sz_lifetime_bound { return string_.internal.start[0]; }
-    const_reference front() const noexcept sz_lifetime_bound { return string_.internal.start[0]; }
-    reference back() noexcept sz_lifetime_bound { return string_.internal.start[size() - 1]; }
-    const_reference back() const noexcept sz_lifetime_bound { return string_.internal.start[size() - 1]; }
-    pointer data() noexcept sz_lifetime_bound { return string_.internal.start; }
-    const_pointer data() const noexcept sz_lifetime_bound { return string_.internal.start; }
-    pointer c_str() noexcept sz_lifetime_bound { return string_.internal.start; }
-    const_pointer c_str() const noexcept sz_lifetime_bound { return string_.internal.start; }
+    reference front() noexcept sz_lifetime_bound_ { return string_.internal.start[0]; }
+    const_reference front() const noexcept sz_lifetime_bound_ { return string_.internal.start[0]; }
+    reference back() noexcept sz_lifetime_bound_ { return string_.internal.start[size() - 1]; }
+    const_reference back() const noexcept sz_lifetime_bound_ { return string_.internal.start[size() - 1]; }
+    pointer data() noexcept sz_lifetime_bound_ { return string_.internal.start; }
+    const_pointer data() const noexcept sz_lifetime_bound_ { return string_.internal.start; }
+    pointer c_str() noexcept sz_lifetime_bound_ { return string_.internal.start; }
+    const_pointer c_str() const noexcept sz_lifetime_bound_ { return string_.internal.start; }
 
-    reference at(size_type pos) noexcept(false) sz_lifetime_bound {
+#if !SZ_AVOID_STL
+
+    reference at(size_type pos) noexcept(false) sz_lifetime_bound_ {
         if (pos >= size()) throw std::out_of_range("sz::basic_string::at");
         return string_.internal.start[pos];
     }
-    const_reference at(size_type pos) const noexcept(false) sz_lifetime_bound {
+    const_reference at(size_type pos) const noexcept(false) sz_lifetime_bound_ {
         if (pos >= size()) throw std::out_of_range("sz::basic_string::at");
         return string_.internal.start[pos];
     }
+
+#endif // !SZ_AVOID_STL
 
     difference_type ssize() const noexcept { return static_cast<difference_type>(size()); }
     size_type size() const noexcept { return view().size(); }
@@ -2288,10 +2297,10 @@ class basic_string {
      *  @brief  Equivalent to Python's `"abc"[-3:-1]`. Exception-safe, unlike STL's `substr`.
      *          Supports signed and unsigned intervals.
      */
-    string_view operator[](std::initializer_list<difference_type> offsets) const noexcept sz_lifetime_bound {
+    string_view operator[](std::initializer_list<difference_type> offsets) const noexcept sz_lifetime_bound_ {
         return view()[offsets];
     }
-    string_span operator[](std::initializer_list<difference_type> offsets) noexcept sz_lifetime_bound {
+    string_span operator[](std::initializer_list<difference_type> offsets) noexcept sz_lifetime_bound_ {
         return span()[offsets];
     }
 
@@ -2299,31 +2308,31 @@ class basic_string {
      *  @brief Signed alternative to `at()`. Handy if you often write `str[str.size() - 2]`.
      *  @warning The behavior is @b undefined if the position is beyond bounds.
      */
-    value_type sat(difference_type offset) const noexcept sz_lifetime_bound { return view().sat(offset); }
-    reference sat(difference_type offset) noexcept sz_lifetime_bound { return span().sat(offset); }
+    value_type sat(difference_type offset) const noexcept sz_lifetime_bound_ { return view().sat(offset); }
+    reference sat(difference_type offset) noexcept sz_lifetime_bound_ { return span().sat(offset); }
 
     /**
      *  @brief The opposite operation to `remove_prefix`, that does no bounds checking.
      *  @warning The behavior is @b undefined if `n > size()`.
      */
-    string_view front(difference_type n) const noexcept sz_lifetime_bound { return view().front(n); }
-    string_span front(difference_type n) noexcept sz_lifetime_bound { return span().front(n); }
+    string_view front(difference_type n) const noexcept sz_lifetime_bound_ { return view().front(n); }
+    string_span front(difference_type n) noexcept sz_lifetime_bound_ { return span().front(n); }
 
     /**
      *  @brief The opposite operation to `remove_prefix`, that does no bounds checking.
      *  @warning The behavior is @b undefined if `n > size()`.
      */
-    string_view back(difference_type n) const noexcept sz_lifetime_bound { return view().back(n); }
-    string_span back(difference_type n) noexcept sz_lifetime_bound { return span().back(n); }
+    string_view back(difference_type n) const noexcept sz_lifetime_bound_ { return view().back(n); }
+    string_span back(difference_type n) noexcept sz_lifetime_bound_ { return span().back(n); }
 
     /**
      *  @brief  Equivalent to Python's `"abc"[-3:-1]`. Exception-safe, unlike STL's `substr`.
      *          Supports signed and unsigned intervals. @b Doesn't copy or allocate memory!
      */
-    string_view sub(difference_type start, difference_type end = npos) const noexcept sz_lifetime_bound {
+    string_view sub(difference_type start, difference_type end = npos) const noexcept sz_lifetime_bound_ {
         return view().sub(start, end);
     }
-    string_span sub(difference_type start, difference_type end = npos) noexcept sz_lifetime_bound {
+    string_span sub(difference_type start, difference_type end = npos) noexcept sz_lifetime_bound_ {
         return span().sub(start, end);
     }
 
@@ -2847,12 +2856,228 @@ class basic_string {
         return true;
     }
 
+    /**
+     *  @brief Resizes the string to a specified number of characters without initializing new elements.
+     *         The provided callback is called to overwrite the contents of the resized string.
+     *  @param[in] count The new size of the string.
+     *  @param[in] operation A callback that receives a pointer and the new size, and returns the actual new size.
+     *  @return `true` if the resizing was successful, `false` otherwise.
+     *  @see https://en.cppreference.com/w/cpp/string/basic_string/resize_and_overwrite
+     */
+    template <typename operation_type_>
+    bool try_resize_and_overwrite(size_type count, operation_type_ operation) noexcept {
+        if (count > max_size()) return false;
+
+        sz_ptr_t string_start;
+        sz_size_t string_length;
+        sz_size_t string_space;
+        sz_bool_t string_is_external;
+        sz_string_unpack(&string_, &string_start, &string_length, &string_space, &string_is_external);
+
+        // Allocate more space if needed, without initializing
+        if (count >= string_space) {
+            if (_with_alloc([&](sz_alloc_type &alloc) {
+                    return sz_string_expand(&string_, SZ_SIZE_MAX, count - string_length, &alloc) ? sz_success_k
+                                                                                                  : sz_bad_alloc_k;
+                }) != status_t::success_k)
+                return false;
+            sz_string_unpack(&string_, &string_start, &string_length, &string_space, &string_is_external);
+        }
+
+        // Call the user's operation to populate the buffer
+        // The operation receives a mutable pointer to the data and the requested count
+        size_type actual_count = operation(reinterpret_cast<char_type *>(string_start), count);
+
+        // Clamp the actual count to the requested count for safety
+        if (actual_count > count) actual_count = count;
+
+        // Update the string length appropriately
+        if (actual_count > string_length) {
+            string_start[actual_count] = '\0';
+            // ! Knowing the layout of the string, we can perform this operation safely,
+            // ! even if its located on stack.
+            string_.external.length += actual_count - string_length;
+        }
+        else { sz_string_erase(&string_, actual_count, SZ_SIZE_MAX); }
+
+        return true;
+    }
 #pragma endregion
 
 #pragma region STL Interfaces
 
     /** @brief Clears the string contents, but @b no deallocations happen. */
     void clear() noexcept { sz_string_erase(&string_, 0, SZ_SIZE_MAX); }
+
+    /**
+     *  @brief  Resizes the string to the given size, filling the new space with the given character,
+     *          or NULL-character if nothing is provided.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    void resize(size_type count, value_type character = '\0') noexcept(false) {
+        if (count > max_size()) throw std::length_error("sz::basic_string::resize");
+        if (!try_resize(count, character)) throw std::bad_alloc();
+    }
+
+    /**
+     *  @brief  Reclaims the unused memory, if any.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    void shrink_to_fit() noexcept(false) {
+        if (!try_shrink_to_fit()) throw std::bad_alloc();
+    }
+
+    /**
+     *  @brief  Informs the string object of a planned change in size, so that it pre-allocate once.
+     *  @throw  `std::length_error` if the string is too long.
+     */
+    void reserve(size_type capacity) noexcept(false) {
+        if (capacity > max_size()) throw std::length_error("sz::basic_string::reserve");
+        if (!try_reserve(capacity)) throw std::bad_alloc();
+    }
+
+    /**
+     *  @brief  Inserts ( @b in-place ) a ::character multiple times at the given offset.
+     *  @throw  `std::out_of_range` if `offset > size()`.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    basic_string &insert(size_type offset, size_type repeats, char_type character) noexcept(false) {
+        if (offset > size()) throw std::out_of_range("sz::basic_string::insert");
+        if (size() + repeats > max_size()) throw std::length_error("sz::basic_string::insert");
+        if (!_with_alloc([&](sz_alloc_type &alloc) { return sz_string_expand(&string_, offset, repeats, &alloc); }))
+            throw std::bad_alloc();
+
+        sz_fill(data() + offset, repeats, character);
+        return *this;
+    }
+
+    /**
+     *  @brief  Inserts ( @b in-place ) a range of characters at the given offset.
+     *  @throw  `std::out_of_range` if `offset > size()`.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    basic_string &insert(size_type offset, string_view other) noexcept(false) {
+        if (offset > size()) throw std::out_of_range("sz::basic_string::insert");
+        if (size() + other.size() > max_size()) throw std::length_error("sz::basic_string::insert");
+        if (!_with_alloc(
+                [&](sz_alloc_type &alloc) { return sz_string_expand(&string_, offset, other.size(), &alloc); }))
+            throw std::bad_alloc();
+
+        sz_copy(data() + offset, other.data(), other.size());
+        return *this;
+    }
+
+    /**
+     *  @brief  Inserts ( @b in-place ) a range of characters at the given offset.
+     *  @throw  `std::out_of_range` if `offset > size()`.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    basic_string &insert(size_type offset, const_pointer start, size_type length) noexcept(false) {
+        return insert(offset, string_view(start, length));
+    }
+
+    /**
+     *  @brief  Inserts ( @b in-place ) a slice of another string at the given offset.
+     *  @throw  `std::out_of_range` if `offset > size()` or `other_index > other.size()`.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    basic_string &insert(size_type offset, string_view other, size_type other_index,
+                         size_type count = npos) noexcept(false) {
+        return insert(offset, other.substr(other_index, count));
+    }
+
+    /**
+     *  @brief  Inserts ( @b in-place ) one ::character at the given iterator position.
+     *  @throw  `std::out_of_range` if `pos > size()` or `other_index > other.size()`.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    iterator insert(const_iterator it, char_type character) noexcept(false) sz_lifetime_bound_ {
+        auto pos = range_length(cbegin(), it);
+        insert(pos, string_view(&character, 1));
+        return begin() + pos;
+    }
+
+    /**
+     *  @brief  Inserts ( @b in-place ) a ::character multiple times at the given iterator position.
+     *  @throw  `std::out_of_range` if `pos > size()` or `other_index > other.size()`.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    iterator insert(const_iterator it, size_type repeats, char_type character) noexcept(false) sz_lifetime_bound_ {
+        auto pos = range_length(cbegin(), it);
+        insert(pos, repeats, character);
+        return begin() + pos;
+    }
+
+    /**
+     *  @brief  Inserts ( @b in-place ) a range at the given iterator position.
+     *  @throw  `std::out_of_range` if `pos > size()` or `other_index > other.size()`.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    template <typename input_iterator>
+    iterator insert(const_iterator it, input_iterator first, input_iterator last) noexcept(false) sz_lifetime_bound_ {
+
+        auto pos = range_length(cbegin(), it);
+        if (pos > size()) throw std::out_of_range("sz::basic_string::insert");
+
+        auto added_length = range_length(first, last);
+        if (size() + added_length > max_size()) throw std::length_error("sz::basic_string::insert");
+
+        if (!_with_alloc([&](sz_alloc_type &alloc) { return sz_string_expand(&string_, pos, added_length, &alloc); }))
+            throw std::bad_alloc();
+
+        iterator result = begin() + pos;
+        for (iterator output = result; first != last; ++first, ++output) *output = *first;
+        return result;
+    }
+
+    /**
+     *  @brief  Inserts ( @b in-place ) an initializer list of characters.
+     *  @throw  `std::out_of_range` if `pos > size()` or `other_index > other.size()`.
+     *  @throw  `std::length_error` if the string is too long.
+     *  @throw  `std::bad_alloc` if the allocation fails.
+     */
+    iterator insert(const_iterator it, std::initializer_list<char_type> list) noexcept(false) sz_lifetime_bound_ {
+        return insert(it, list.begin(), list.end());
+    }
+
+    /**
+     *  @brief  Erases ( @b in-place ) the given range of characters.
+     *  @throws `std::out_of_range` if `pos > size()`.
+     *  @see    `try_erase_slice` for a cleaner exception-less alternative.
+     */
+    basic_string &erase(size_type pos = 0, size_type count = npos) noexcept(false) {
+        if (!count || empty()) return *this;
+        if (pos >= size()) throw std::out_of_range("sz::basic_string::erase");
+        sz_string_erase(&string_, pos, count);
+        return *this;
+    }
+
+    /**
+     *  @brief  Erases ( @b in-place ) the given range of characters.
+     *  @return Iterator pointing following the erased character, or end() if no such character exists.
+     */
+    iterator erase(const_iterator first, const_iterator last) noexcept sz_lifetime_bound_ {
+        auto start = begin();
+        auto offset = first - start;
+        sz_string_erase(&string_, offset, last - first);
+        return start + offset;
+    }
+
+    /**
+     *  @brief Erases @b (in-place) the one character at a given postion.
+     *  @return Iterator pointing following the erased character, or end() if no such character exists.
+     */
+    iterator erase(const_iterator pos) noexcept sz_lifetime_bound_ { return erase(pos, pos + 1); }
+
+#if !SZ_AVOID_STL
 
     /**
      *  @brief Resizes the string to match @p count, filling the new space with the given @p character.
@@ -2862,6 +3087,22 @@ class basic_string {
     void resize(size_type count, value_type character = '\0') noexcept(false) {
         if (count > max_size()) throw std::length_error("sz::basic_string::resize");
         if (!try_resize(count, character)) throw std::bad_alloc();
+    }
+
+    /**
+     *  @brief Resizes the string to a specified number of characters without initializing new elements.
+     *         The provided callback is called to overwrite the contents of the resized string.
+     *  @param[in] count The new size of the string.
+     *  @param[in] operation A callback that receives a pointer and the new size, and returns the actual new size.
+     *  @throw `std::length_error` if the string is too long.
+     *  @throw `std::bad_alloc` if the allocation fails.
+     *  @see https://en.cppreference.com/w/cpp/string/basic_string/resize_and_overwrite
+
+     */
+    template <typename operation_type_>
+    void resize_and_overwrite(size_type count, operation_type_ operation) noexcept(false) {
+        if (count > max_size()) throw std::length_error("sz::basic_string::resize_and_overwrite");
+        if (!try_resize_and_overwrite(count, operation)) throw std::bad_alloc();
     }
 
     /**
@@ -2940,7 +3181,7 @@ class basic_string {
      *  @throw `std::length_error` if the string is too long.
      *  @throw `std::bad_alloc` if the allocation fails.
      */
-    iterator insert(const_iterator it, char_type character) noexcept(false) sz_lifetime_bound {
+    iterator insert(const_iterator it, char_type character) noexcept(false) {
         auto pos = range_length(cbegin(), it);
         insert(pos, string_view(&character, 1));
         return begin() + pos;
@@ -2952,7 +3193,7 @@ class basic_string {
      *  @throw `std::length_error` if the string is too long.
      *  @throw `std::bad_alloc` if the allocation fails.
      */
-    iterator insert(const_iterator it, size_type repeats, char_type character) noexcept(false) sz_lifetime_bound {
+    iterator insert(const_iterator it, size_type repeats, char_type character) noexcept(false) {
         auto pos = range_length(cbegin(), it);
         insert(pos, repeats, character);
         return begin() + pos;
@@ -2965,7 +3206,7 @@ class basic_string {
      *  @throw `std::bad_alloc` if the allocation fails.
      */
     template <typename input_iterator>
-    iterator insert(const_iterator it, input_iterator first, input_iterator last) noexcept(false) sz_lifetime_bound {
+    iterator insert(const_iterator it, input_iterator first, input_iterator last) noexcept(false) {
 
         auto pos = range_length(cbegin(), it);
         if (pos > size()) throw std::out_of_range("sz::basic_string::insert");
@@ -2988,7 +3229,7 @@ class basic_string {
      *  @throw `std::length_error` if the string is too long.
      *  @throw `std::bad_alloc` if the allocation fails.
      */
-    iterator insert(const_iterator it, std::initializer_list<char_type> list) noexcept(false) sz_lifetime_bound {
+    iterator insert(const_iterator it, std::initializer_list<char_type> list) noexcept(false) {
         return insert(it, list.begin(), list.end());
     }
 
@@ -3003,23 +3244,6 @@ class basic_string {
         sz_string_erase(&string_, pos, count);
         return *this;
     }
-
-    /**
-     *  @brief Erases @b (in-place) the given range of characters.
-     *  @return Iterator pointing following the erased character, or end() if no such character exists.
-     */
-    iterator erase(const_iterator first, const_iterator last) noexcept sz_lifetime_bound {
-        auto start = begin();
-        auto offset = first - start;
-        sz_string_erase(&string_, offset, last - first);
-        return start + offset;
-    }
-
-    /**
-     *  @brief Erases @b (in-place) the one character at a given postion.
-     *  @return Iterator pointing following the erased character, or end() if no such character exists.
-     */
-    iterator erase(const_iterator pos) noexcept sz_lifetime_bound { return erase(pos, pos + 1); }
 
     /**
      *  @brief Replaces @b (in-place) a range of characters with a given string.
@@ -3187,7 +3411,7 @@ class basic_string {
      */
     basic_string &assign(size_type repeats, char_type character) noexcept(false) {
         resize(repeats, character);
-        sz_fill(data(), repeats, *(sz_u8_t *)&character);
+        sz_fill(data(), repeats, sz_bitcast_(sz_u8_t, character));
         return *this;
     }
 
@@ -3316,6 +3540,7 @@ class basic_string {
         return basic_string {concatenation<string_view, string_view> {view(), string_view(other)}};
     }
 
+#endif
 #pragma endregion
 #pragma endregion
 
