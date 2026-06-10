@@ -532,6 +532,201 @@ void test_utf8_equivalence(                                 //
     }
 }
 
+/**
+ *  @brief  Tests equivalence of case folding implementations (serial vs SIMD).
+ *
+ *  Generates random UTF-8 strings containing:
+ *  - ASCII text (uppercase and lowercase)
+ *  - Multi-byte UTF-8 characters from various scripts (Cyrillic, Greek, Latin Extended)
+ *  - Special cases like German ß
+ *
+ *  For each generated string, compares byte-by-byte output of both implementations.
+ */
+void test_utf8_case_fold_equivalence(                             //
+    sz_utf8_case_fold_t fold_base, sz_utf8_case_fold_t fold_simd, //
+    std::size_t min_text_length = 4000, std::size_t min_iterations = 10000) {
+
+    // Output buffers (3x input for worst-case expansion)
+    std::vector<char> output_base(min_text_length * 3 + 256);
+    std::vector<char> output_simd(min_text_length * 3 + 256);
+
+    auto check = [&](std::string const &text) {
+        // Ensure buffers are large enough
+        if (output_base.size() < text.size() * 3 + 64) {
+            output_base.resize(text.size() * 3 + 64);
+            output_simd.resize(text.size() * 3 + 64);
+        }
+
+        sz_size_t len_base = fold_base(text.data(), text.size(), output_base.data());
+        sz_size_t len_simd = fold_simd(text.data(), text.size(), output_simd.data());
+
+        if (len_base != len_simd) {
+            std::fprintf(stderr, "Case fold length mismatch: base=%zu, simd=%zu, input_len=%zu\n", //
+                         len_base, len_simd, text.size());
+            // Print first divergence
+            for (std::size_t i = 0; i < std::min(len_base, len_simd); ++i) {
+                if (output_base[i] != output_simd[i]) {
+                    std::fprintf(stderr, "First byte diff at output[%zu]: base=0x%02X, simd=0x%02X\n", //
+                                 i, (unsigned char)output_base[i], (unsigned char)output_simd[i]);
+                    break;
+                }
+            }
+            assert(len_base == len_simd && "Case fold length mismatch");
+        }
+
+        for (sz_size_t i = 0; i < len_base; ++i) {
+            if (output_base[i] != output_simd[i]) {
+                std::fprintf(stderr, "Case fold content mismatch at byte %zu: base=0x%02X, simd=0x%02X\n", //
+                             i, (unsigned char)output_base[i], (unsigned char)output_simd[i]);
+                // Show context around the mismatch
+                std::size_t start = i > 10 ? i - 10 : 0;
+                std::size_t end = std::min(i + 10, (std::size_t)len_base);
+                std::fprintf(stderr, "Base output[%zu..%zu]: ", start, end);
+                for (std::size_t j = start; j < end; ++j) std::fprintf(stderr, "%02X ", (unsigned char)output_base[j]);
+                std::fprintf(stderr, "\nSIMD output[%zu..%zu]: ", start, end);
+                for (std::size_t j = start; j < end; ++j) std::fprintf(stderr, "%02X ", (unsigned char)output_simd[j]);
+                std::fprintf(stderr, "\n");
+                assert(output_base[i] == output_simd[i] && "Case fold content mismatch");
+            }
+        }
+    };
+
+    // Test content - mix of scripts with case folding rules
+    static char const *utf8_content[] = {
+        // ASCII
+        "",
+        "a",
+        "A",
+        "hello",
+        "HELLO",
+        "Hello World",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "0123456789",
+        // German Eszett (both ß and ẞ fold to "ss")
+        "\xC3\x9F", // ß (U+00DF) → ss
+        "straße",
+        // Latin-1 uppercase (À-Þ range, 2-byte UTF-8 starting with C3)
+        "\xC3\x80", // À (U+00C0)
+        "\xC3\x89", // É (U+00C9)
+        "\xC3\x96", // Ö (U+00D6)
+        "\xC3\x9C", // Ü (U+00DC)
+        "\xC3\x9E", // Þ (U+00DE)
+        // Cyrillic (2-byte UTF-8 starting with D0-D1)
+        "\xD0\x90",                                         // А (U+0410)
+        "\xD0\x9F",                                         // П (U+041F)
+        "\xD0\x9F\xD0\xA0\xD0\x98\xD0\x92\xD0\x95\xD0\xA2", // ПРИВЕТ
+        "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82", // привет
+        // Greek (2-byte UTF-8 starting with CE-CF)
+        "\xCE\x91",                                         // Α (U+0391)
+        "\xCE\xA9",                                         // Ω (U+03A9)
+        "\xCE\x95\xCE\xBB\xCE\xBB\xCE\xAC\xCE\xB4\xCE\xB1", // Ελλάδα
+        // Armenian (2-byte UTF-8 starting with D4-D5)
+        "\xD4\xB1", // Ա (U+0531)
+        "\xD5\x80", // Հ (U+0540)
+        // Mixed content
+        "Hello \xD0\x9C\xD0\xB8\xD1\x80!",      // Hello Мир!
+        "Caf\xC3\xA9 \xCE\xB1\xCE\xB2\xCE\xB3", // Café αβγ
+        // Emojis (no case folding, should pass through)
+        "\xF0\x9F\x98\x80",             // 😀
+        "Hello \xF0\x9F\x8C\x8D World", // Hello 🌍 World
+    };
+
+    auto &rng = global_random_generator();
+    std::size_t const content_count = sizeof(utf8_content) / sizeof(utf8_content[0]);
+    std::uniform_int_distribution<std::size_t> content_dist(0, content_count - 1);
+
+    // First, test all the fixed strings
+    for (std::size_t i = 0; i < content_count; ++i) { check(utf8_content[i]); }
+
+    // Generate and test many random strings
+    for (std::size_t iteration = 0; iteration < min_iterations; ++iteration) {
+        std::string text;
+
+        // Build up a random string of at least `min_text_length` bytes
+        while (text.size() < min_text_length) {
+            std::size_t idx = content_dist(rng);
+            text.append(utf8_content[idx]);
+        }
+        check(text);
+    }
+}
+
+/**
+ *  @brief  Tests UTF-8 case folding for ALL valid Unicode codepoints.
+ *
+ *  Generates a string containing every valid Unicode codepoint (0x0000-0x10FFFF,
+ *  excluding surrogates 0xD800-0xDFFF), folds it with both serial and SIMD
+ *  implementations, and reports any codepoints that produce different results.
+ */
+void test_utf8_case_fold_all_codepoints(sz_utf8_case_fold_t fold_base, sz_utf8_case_fold_t fold_simd) {
+    std::printf("Testing case folding for all Unicode codepoints...\n");
+
+    // Generate text with all valid Unicode codepoints
+    std::vector<char> all_codepoints;
+    std::vector<sz_rune_t> codepoints_list;
+
+    for (sz_rune_t cp = 0; cp <= 0x10FFFF; ++cp) {
+        // Skip surrogates (invalid in UTF-8)
+        if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+
+        sz_u8_t buf[4];
+        sz_rune_length_t len = sz_rune_export(cp, buf);
+        all_codepoints.insert(all_codepoints.end(), buf, buf + len);
+        codepoints_list.push_back(cp);
+    }
+
+    std::printf("Generated %zu codepoints (%zu bytes)\n", codepoints_list.size(), all_codepoints.size());
+
+    // Allocate output buffers (4x for worst-case expansion like ΐ → ι + 2 combining marks)
+    std::vector<char> output_base(all_codepoints.size() * 4);
+    std::vector<char> output_simd(all_codepoints.size() * 4);
+
+    // Fold with both implementations
+    sz_size_t len_base = fold_base(all_codepoints.data(), all_codepoints.size(), output_base.data());
+    sz_size_t len_simd = fold_simd(all_codepoints.data(), all_codepoints.size(), output_simd.data());
+
+    // Compare results
+    bool all_match = (len_base == len_simd) && (std::memcmp(output_base.data(), output_simd.data(), len_base) == 0);
+
+    if (all_match) {
+        std::printf("All %zu codepoints fold identically!\n", codepoints_list.size());
+        return;
+    }
+
+    // Find and report specific failing codepoints
+    std::printf("Mismatch detected! Scanning for failing codepoints...\n");
+    std::size_t fail_count = 0;
+    std::size_t src_offset = 0;
+
+    for (sz_rune_t cp : codepoints_list) {
+        // Get the UTF-8 length of this codepoint
+        sz_u8_t tmp[4];
+        sz_rune_length_t cp_len = sz_rune_export(cp, tmp);
+
+        // Fold this single codepoint with both implementations
+        char expected[16], actual[16];
+        sz_size_t exp_len = fold_base(all_codepoints.data() + src_offset, cp_len, expected);
+        sz_size_t act_len = fold_simd(all_codepoints.data() + src_offset, cp_len, actual);
+
+        if (exp_len != act_len || std::memcmp(expected, actual, exp_len) != 0) {
+            fail_count++;
+            if (fail_count <= 50) { // Limit output
+                std::fprintf(stderr, "FAIL U+%04X: expected %zu bytes [", cp, exp_len);
+                for (sz_size_t i = 0; i < exp_len; ++i) std::fprintf(stderr, "%02X ", (unsigned char)expected[i]);
+                std::fprintf(stderr, "], got %zu bytes [", act_len);
+                for (sz_size_t i = 0; i < act_len; ++i) std::fprintf(stderr, "%02X ", (unsigned char)actual[i]);
+                std::fprintf(stderr, "]\n");
+            }
+        }
+
+        src_offset += cp_len;
+    }
+
+    std::fprintf(stderr, "Total failures: %zu out of %zu codepoints\n", fail_count, codepoints_list.size());
+    assert(fail_count == 0 && "Case folding mismatch for some codepoints");
+}
+
 void test_equivalence() {
 
     // Ensure the seed affects hash results
@@ -615,6 +810,8 @@ void test_equivalence() {
         sz_utf8_find_newline_ice,                //
         sz_utf8_find_whitespace_serial,          //
         sz_utf8_find_whitespace_ice);
+    test_utf8_case_fold_equivalence(sz_utf8_case_fold_serial, sz_utf8_case_fold_ice);
+    test_utf8_case_fold_all_codepoints(sz_utf8_case_fold_serial, sz_utf8_case_fold_ice);
 #endif
 #if SZ_USE_NEON
     test_utf8_equivalence(                        //
@@ -1987,7 +2184,6 @@ void test_utf8() {
         // Precomposed vs decomposed normalization
         let_assert(auto c = chars("é"), c.size() == 1 && c[0] == 0x00E9); // Precomposed
 
-        // Test all byte-length transitions (stress Ice Lake waterfall approach)
         // Missing transitions: 1→2, 2→1, 2→3, 3→2, 2→4, 4→2, 3→4, 4→3
         let_assert(auto c = chars("aП"), c.size() == 2 && c[0] == 'a' && c[1] == 0x041F);       // 1→2
         let_assert(auto c = chars("Пa"), c.size() == 2 && c[0] == 0x041F && c[1] == 'a');       // 2→1
@@ -2003,28 +2199,28 @@ void test_utf8() {
         let_assert(auto c = chars("世界人"), c.size() == 3 && c[0] == 0x4E16 && c[2] == 0x4EBA); // 3→3→3
 
         // Asymmetric alternating patterns (2:3, 3:2) - stress homogeneity assumption
-        let_assert(auto c = chars("aaПППaaППП"), c.size() == 10);           // 2 ASCII, 3 Cyrillic
-        let_assert(auto c = chars("aaaППaaaПП"), c.size() == 10);           // 3 ASCII, 2 Cyrillic
-        let_assert(auto c = chars("aa世世世aa世世世"), c.size() == 10);     // 2 ASCII, 3 CJK
+        let_assert(auto c = chars("xxПППxxППП"), c.size() == 10);           // 2 ASCII, 3 Cyrillic
+        let_assert(auto c = chars("xxxППxxxПП"), c.size() == 10);           // 3 ASCII, 2 Cyrillic
+        let_assert(auto c = chars("xx世世世xx世世世"), c.size() == 10);     // 2 ASCII, 3 CJK
         let_assert(auto c = chars("ПП世世世ПП世世世"), c.size() == 10);     // 2 Cyrillic, 3 CJK
         let_assert(auto c = chars("世世😀😀😀世世😀😀😀"), c.size() == 10); // 2 CJK, 3 Emoji
-        let_assert(auto c = chars("aaa😀😀aaa😀😀"), c.size() == 10);       // 3 ASCII, 2 Emoji
+        let_assert(auto c = chars("xxx😀😀xxx😀😀"), c.size() == 10);       // 3 ASCII, 2 Emoji
 
         // Pathological mixed patterns
-        let_assert(auto c = chars("aaПППП世世世世😀😀😀😀😀"), c.size() == 15); // 2-4-4-5
-        let_assert(auto c = chars("aaПППaa😀😀😀😀世世世ПП"), c.size() == 16);  // 2-3-2-4-3-2
+        let_assert(auto c = chars("xxПППП世世世世😀😀😀😀😀"), c.size() == 15); // 2-4-4-5
+        let_assert(auto c = chars("xxПППxx😀😀😀😀世世世ПП"), c.size() == 16);  // 2-3-2-4-3-2
 
-        // Extended asymmetric: 30x "aaППП" = 150 chars, 210 bytes (crosses multiple 64-byte chunks)
-        scope_assert(std::string asym_long, for (int i = 0; i < 30; ++i) asym_long += "aaППП",
+        // Extended asymmetric: 30x "xxППП" = 150 chars, 210 bytes (crosses multiple 64-byte chunks)
+        scope_assert(std::string asym_long, for (int i = 0; i < 30; ++i) asym_long += "xxППП",
                      sz::string_view(asym_long).utf8_count() == 150);
     }
 
     // Test 64-byte chunk boundaries and batch limits
     {
         // Critical 63, 64, 65 byte boundaries
-        let_assert(std::string s63(63, 'a'), sz::string_view(s63).utf8_chars().size() == 63);
-        let_assert(std::string s64(64, 'a'), sz::string_view(s64).utf8_chars().size() == 64);
-        let_assert(std::string s65(65, 'a'), sz::string_view(s65).utf8_chars().size() == 65);
+        let_assert(std::string s63(63, 'x'), sz::string_view(s63).utf8_chars().size() == 63);
+        let_assert(std::string s64(64, 'x'), sz::string_view(s64).utf8_chars().size() == 64);
+        let_assert(std::string s65(65, 'x'), sz::string_view(s65).utf8_chars().size() == 65);
 
         // ASCII batch limit: 16 characters max per Ice Lake iteration
         let_assert(std::string s17(17, 'x'), sz::string_view(s17).utf8_chars().size() == 17);
@@ -2049,7 +2245,7 @@ void test_utf8() {
                      sz::string_view(emoji17).utf8_count() == 17);
 
         // Asymmetric at chunk boundary: 60 ASCII + "ПП世" = 63 chars, 67 bytes
-        scope_assert(std::string boundary_asym(60, 'a'), boundary_asym += "ПП世",
+        scope_assert(std::string boundary_asym(60, 'x'), boundary_asym += "ПП世",
                      sz::string_view(boundary_asym).utf8_count() == 63);
 
         // Test sequences exceeding batch limits
@@ -2071,7 +2267,7 @@ void test_utf8() {
 
         // Test transitions at chunk boundaries
         // 63 bytes ASCII + 2-byte char (transition at 64-byte boundary)
-        scope_assert(std::string boundary_test(63, 'a'), boundary_test += "П",
+        scope_assert(std::string boundary_test(63, 'x'), boundary_test += "П",
                      sz::string_view(boundary_test).utf8_chars().size() == 64);
 
         // Asymmetric spanning boundary: 60 ASCII + 24 Cyrillic = 84 chars, 108 bytes
@@ -2084,7 +2280,7 @@ void test_utf8() {
             sz::string_view(span_asym).utf8_count() == 84);
 
         // Transition exactly at 64-byte boundary
-        scope_assert(std::string exact_boundary(64, 'a'), exact_boundary += "П世😀",
+        scope_assert(std::string exact_boundary(64, 'x'), exact_boundary += "П世😀",
                      sz::string_view(exact_boundary).utf8_count() == 67);
     }
 
@@ -2289,6 +2485,93 @@ void test_utf8() {
         // Unicode characters without case folding should pass through unchanged
         assert(case_fold("日本語") == "日本語"); // Japanese (no case)
         assert(case_fold("中文") == "中文");     // Chinese (no case)
+    }
+
+    // Test case-insensitive string comparison
+    {
+        // Equal strings (ASCII)
+        let_assert(auto r = sz_utf8_case_insensitive_order("hello", 5, "HELLO", 5), r == sz_equal_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("abc", 3, "ABC", 3), r == sz_equal_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("HeLLo WoRLd", 11, "hello world", 11), r == sz_equal_k);
+
+        // Less than
+        let_assert(auto r = sz_utf8_case_insensitive_order("abc", 3, "abd", 3), r == sz_less_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("ab", 2, "abc", 3), r == sz_less_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("ABC", 3, "abd", 3), r == sz_less_k);
+
+        // Greater than
+        let_assert(auto r = sz_utf8_case_insensitive_order("abd", 3, "abc", 3), r == sz_greater_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("abcd", 4, "abc", 3), r == sz_greater_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("ABD", 3, "abc", 3), r == sz_greater_k);
+
+        // German Eszett: "straße" (7 bytes) vs "STRASSE" (7 bytes) should be equal
+        let_assert(auto r = sz_utf8_case_insensitive_order("straße", 7, "STRASSE", 7), r == sz_equal_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("STRASSE", 7, "straße", 7), r == sz_equal_k);
+
+        // Empty strings
+        let_assert(auto r = sz_utf8_case_insensitive_order("", 0, "", 0), r == sz_equal_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("a", 1, "", 0), r == sz_greater_k);
+        let_assert(auto r = sz_utf8_case_insensitive_order("", 0, "a", 1), r == sz_less_k);
+
+        // Greek case folding
+        let_assert(auto r = sz_utf8_case_insensitive_order("αβγδ", 8, "ΑΒΓΔ", 8), r == sz_equal_k);
+
+        // Cyrillic case folding
+        let_assert(auto r = sz_utf8_case_insensitive_order("привет", 12, "ПРИВЕТ", 12), r == sz_equal_k);
+    }
+
+    // Test case-insensitive substring search
+    {
+        sz_size_t matched_len;
+        sz_cptr_t haystack;
+        sz_cptr_t result;
+
+        // Basic ASCII search
+        haystack = "Hello World";
+        result = sz_utf8_case_insensitive_find(haystack, 11, "WORLD", 5, &matched_len);
+        assert(result == haystack + 6 && matched_len == 5);
+
+        result = sz_utf8_case_insensitive_find(haystack, 11, "world", 5, &matched_len);
+        assert(result == haystack + 6 && matched_len == 5);
+
+        // Search at start
+        haystack = "HELLO";
+        result = sz_utf8_case_insensitive_find(haystack, 5, "hello", 5, &matched_len);
+        assert(result == haystack && matched_len == 5);
+
+        // Not found
+        result = sz_utf8_case_insensitive_find("Hello", 5, "xyz", 3, &matched_len);
+        assert(result == SZ_NULL_CHAR);
+
+        // Empty needle
+        haystack = "Hello";
+        result = sz_utf8_case_insensitive_find(haystack, 5, "", 0, &matched_len);
+        assert(result == haystack && matched_len == 0);
+
+        // Eszett matching: search for "ss" in "straße"
+        haystack = "straße";
+        result = sz_utf8_case_insensitive_find(haystack, 7, "SS", 2, &matched_len);
+        assert(result != SZ_NULL_CHAR);
+
+        // Search for "straße" in "STRASSE"
+        haystack = "STRASSE";
+        result = sz_utf8_case_insensitive_find(haystack, 7, "straße", 7, &matched_len);
+        assert(result == haystack);
+
+        // Greek case folding search
+        haystack = "αβγδ";
+        result = sz_utf8_case_insensitive_find(haystack, 8, "ΑΒΓΔ", 8, &matched_len);
+        assert(result == haystack);
+
+        // Cyrillic search
+        haystack = "привет мир";
+        result = sz_utf8_case_insensitive_find(haystack, 19, "ПРИВЕТ", 12, &matched_len);
+        assert(result == haystack);
+
+        // Mixed case in middle
+        haystack = "foo BAR baz";
+        result = sz_utf8_case_insensitive_find(haystack, 11, "bar", 3, &matched_len);
+        assert(result == haystack + 4 && matched_len == 3);
     }
 }
 
