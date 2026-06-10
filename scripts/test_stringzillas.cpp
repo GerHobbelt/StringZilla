@@ -37,12 +37,13 @@
 #endif
 #define SZ_DEBUG 1 // ! Enforce aggressive logging in this translation unit
 
-#include "test_stringzillas.cuh"
+#include "test_stringzilla.hpp"
 
 #include "test_fingerprints.cuh"
 #include "test_similarities.cuh"
 
-namespace szs = ashvardanian::stringzillas;
+namespace sz = ashvardanian::stringzilla;
+using namespace sz::scripts;
 
 #if defined(BUILD_MONOLITHIC)
 #define main  stringzilla_test_stringzillas_main
@@ -90,17 +91,18 @@ int main(int argc, char const **argv) {
     std::printf("- CUDA unified memory support: %s\n", prop.unifiedAddressing == 1 ? "yes" : "no");
 #endif
 
-    if (auto code = szs::scripts::log_environment(); code != 0) return code;
+    if (auto code = log_environment(); code != 0) return code;
+    print_test_environment();
 
     try {
         std::printf("- test_rolling_hashers_equivalence...\n");
-        szs::scripts::test_rolling_hashers_equivalence();
+        test_rolling_hashers_equivalence();
         std::printf("- test_rolling_hasher...\n");
-        szs::scripts::test_rolling_hasher();
+        test_rolling_hasher();
         std::printf("- test_similarity_scores_equivalence...\n");
-        szs::scripts::test_similarity_scores_equivalence();
+        test_similarity_scores_equivalence();
         std::printf("- test_similarity_scores_memory_usage...\n");
-        szs::scripts::test_similarity_scores_memory_usage();
+        test_similarity_scores_memory_usage();
     }
     catch (std::exception const &e) {
         std::fprintf(stderr, "Failed with: %s\n", e.what());
